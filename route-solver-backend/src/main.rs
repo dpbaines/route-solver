@@ -1,5 +1,6 @@
 
 pub mod web_app;
+pub mod flight_api;
 
 use actix_web::{web, App, HttpServer};
 
@@ -11,7 +12,6 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .service(web_app::hello)
             .service(web_app::compute)
-            .route("/hey", web::get().to(web_app::manual_hello))
     })
     .bind(("127.0.0.1", 8080))?
     .run()
