@@ -31,11 +31,18 @@ pub async fn hello() -> impl Responder {
 
 #[post("/compute_route")]
 pub async fn compute(json: web::Json<RouteQuery>) -> impl Responder {
-    HttpResponse::Ok().body(format!("Start city {0}, End City {1}, num_hops {2}", json.start_city, json.end_city, json.hops.len()))
+    HttpResponse::Ok().body(format!(
+        "Start city {0}, End City {1}, num_hops {2}",
+        json.start_city,
+        json.end_city,
+        json.hops.len()
+    ))
 }
 
 #[post("/get_price")]
 pub async fn price(json: web::Json<SingleHopPriceQuery>) -> impl Responder {
-    HttpResponse::Ok().body(format!("Getting prices for flight: Start city {0}, End City {1}", json.start_city, json.end_city))
+    HttpResponse::Ok().body(format!(
+        "Getting prices for flight: Start city {0}, End City {1}",
+        json.start_city, json.end_city
+    ))
 }
-

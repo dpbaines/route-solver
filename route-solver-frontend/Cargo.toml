@@ -6,3 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+yew = { version = "0.20", features = ["csr"] }
+web-sys = { version = "0.3.64", features = ['Headers', 'Request', 'RequestInit', 'RequestMode', 'Response', 'Window'] }
+wasm-bindgen-futures = "0.4.37"
+route-solver-shared = { path = "../route-solver-shared/" }
+

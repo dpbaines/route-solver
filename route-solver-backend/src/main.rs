@@ -1,21 +1,17 @@
-
-pub mod web_app;
 pub mod flight_api;
+pub mod router;
+pub mod web_app;
 
-use actix_web::{web, App, HttpServer};
+use actix_web::{App, HttpServer};
 
 // use hyper::{Client, Result};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    HttpServer::new(|| {
-        App::new()
-            .service(web_app::hello)
-            .service(web_app::compute)
-    })
-    .bind(("127.0.0.1", 8080))?
-    .run()
-    .await
+    HttpServer::new(|| App::new().service(web_app::hello).service(web_app::compute))
+        .bind(("127.0.0.1", 8080))?
+        .run()
+        .await
 }
 
 // #[allow(dead_code)]

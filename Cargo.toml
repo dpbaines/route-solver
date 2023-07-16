@@ -1,2 +1,2 @@
 [workspace]
-members = ["route-solver-backend/", "route-solver-frontend/"]
+members = ["route-solver-backend/", "route-solver-frontend/", "route-solver-shared/"]
