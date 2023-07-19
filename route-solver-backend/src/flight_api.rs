@@ -5,6 +5,7 @@
 use route_solver_shared::Queries::{Date, SingleDateRange};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{collections::HashMap, time};
+use thiserror::Error;
 
 const SKYSCANNER_IND_PRICES_ENDPOINT: &str =
     "https://partners.api.skyscanner.net/apiservices/v3/flights/indicative/search";
@@ -16,13 +17,19 @@ pub struct LegQuery {
     date: SingleDateRange,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum QueryError {
+    #[error("No legs were provided.")]
     NoLegs,
+    #[error("Error deserializing JSON response from API.")]
     ResponseConversionErr(serde_json::Error, String),
+    #[error("Error from reqwest.")]
     ReqwestErr(reqwest::Error),
+    #[error("Response format is unexpected, cannot deserialize.")]
     ResponseUnexpectedFormatErr(String),
+    #[error("Rate limit for API exceeded")]
     RateLimitExceeded,
+    #[error("Bad response from API.")]
     BadResponse(u16),
 }
 

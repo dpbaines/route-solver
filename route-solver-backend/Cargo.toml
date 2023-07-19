@@ -14,3 +14,4 @@ yew = "0.20"
 actix-web = "4"
 async-trait = "0.1.68"
 route-solver-shared = { path = "../route-solver-shared/" }
+thiserror = "1.0.43"
