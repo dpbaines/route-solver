@@ -12,9 +12,9 @@ const SKYSCANNER_IND_PRICES_ENDPOINT: &str =
 const SKYSCANNER_PUB_API_KEY: &str = "sh428739766321522266746152871799";
 
 pub struct LegQuery {
-    start: String,
-    end: String,
-    date: SingleDateRange,
+    pub start: String,
+    pub end: String,
+    pub date: SingleDateRange,
 }
 
 #[derive(Debug, Error)]
@@ -76,7 +76,7 @@ impl Serialize for LegQuery {
             "destinationPlace",
             &HashMap::from([("queryPlace", &HashMap::from([("iata", self.end.clone())]))]),
         )?;
-        match self.date {
+        match &self.date {
             SingleDateRange::Anytime => state.serialize_field("anytime", &true),
             SingleDateRange::FixedDate(date) => state.serialize_field(
                 "fixedDate",

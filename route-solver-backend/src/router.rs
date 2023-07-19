@@ -2,7 +2,7 @@
 //!
 //! todo: Explain algorithm
 
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::flight_api::{LegQuery, PriceQuery, Quote};
 use route_solver_shared::Queries::*;
@@ -21,6 +21,15 @@ struct Router {
     db: RouterDb,
 }
 
+/// Graph node for main flights graph. The flights graph represents all possible flight/date combinations given the route problem.
+///
+/// Each node contains a [Flight](route_solver_shared::Queries::Flight), a price, and an child list. Price is lazy loaded to not kill the API.
+struct FlightNode {
+    flight: Flight,
+    price: Option<f32>,
+    childs: Vec<Rc<RefCell<FlightNode>>>,
+}
+
 impl Router {
     fn new() -> Router {
         Router {
@@ -29,9 +38,19 @@ impl Router {
     }
 
     /// Main solver routine, takes in problem and outputs route.
+    ///
+    /// The algorithm performs the following general steps to create the route
+    /// 1. Construct a graph of all possible ```Flight```s between the anchor SRC and anchor DEST
+    ///     a. A ```Flight``` represents a src/dest with a date of travel
+    ///     b. Each node on the graph represents a flight with a cost of that flight (lazy calculated)
+    /// 2. Djikstra search from SRC to DEST anchor
     fn calc(&self, problem: RouterProblem) -> Vec<FlightPrice> {
+        let graph_root = self.construct_graph(problem);
+
         todo!();
     }
+
+    fn construct_graph(&mut self, problem: RouterProblem) -> FlightNode {}
 }
 
 impl RouterDb {
