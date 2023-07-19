@@ -1,4 +1,4 @@
-use route_solver_shared::Queries::Date;
+use route_solver_shared::Queries::{Date, SingleDateRange};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{collections::HashMap, time};
 
@@ -6,16 +6,10 @@ const SKYSCANNER_IND_PRICES_ENDPOINT: &str =
     "https://partners.api.skyscanner.net/apiservices/v3/flights/indicative/search";
 const SKYSCANNER_PUB_API_KEY: &str = "sh428739766321522266746152871799";
 
-pub enum QueryDateRange {
-    Anytime,
-    FixedDate(Date),
-    DateRange(Date, Date),
-}
-
 pub struct LegQuery {
     start: String,
     end: String,
-    date: QueryDateRange,
+    date: SingleDateRange,
 }
 
 #[derive(Debug)]
@@ -72,8 +66,8 @@ impl Serialize for LegQuery {
             &HashMap::from([("queryPlace", &HashMap::from([("iata", self.end.clone())]))]),
         )?;
         match self.date {
-            QueryDateRange::Anytime => state.serialize_field("anytime", &true),
-            QueryDateRange::FixedDate(date) => state.serialize_field(
+            SingleDateRange::Anytime => state.serialize_field("anytime", &true),
+            SingleDateRange::FixedDate(date) => state.serialize_field(
                 "fixedDate",
                 &HashMap::from([
                     ("year", date.year),
@@ -81,7 +75,7 @@ impl Serialize for LegQuery {
                     ("day", date.day),
                 ]),
             ),
-            QueryDateRange::DateRange(date1, date2) => state.serialize_field(
+            SingleDateRange::DateRange(date1, date2) => state.serialize_field(
                 "dateRange",
                 &HashMap::from([
                     (
@@ -259,7 +253,7 @@ mod flight_api_tests {
     use route_solver_shared::Queries::Date;
 
     use crate::flight_api::LegQuery;
-    use crate::flight_api::QueryDateRange;
+    use crate::flight_api::SingleDateRange;
     use crate::flight_api::{PriceQuery, SkyScannerApiQuery, TestPriceApiQuery};
 
     #[tokio::test]
@@ -267,7 +261,7 @@ mod flight_api_tests {
         let api = SkyScannerApiQuery::new(vec![LegQuery {
             start: "JFK".to_string(),
             end: "YVR".to_string(),
-            date: QueryDateRange::FixedDate(Date::new(10, 8, 2023)),
+            date: SingleDateRange::FixedDate(Date::new(10, 8, 2023)),
         }]);
 
         let quotes = api.get_prices().await;

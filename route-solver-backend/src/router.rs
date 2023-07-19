@@ -1,6 +1,6 @@
-use std::{collections::HashMap, time};
+use std::collections::HashMap;
 
-use crate::flight_api::{LegQuery, PriceQuery, QueryDateRange, Quote};
+use crate::flight_api::{LegQuery, PriceQuery, Quote};
 use route_solver_shared::Queries::*;
 
 struct RouterDb {
@@ -24,32 +24,7 @@ impl Router {
     }
 
     fn calc(&self, problem: RouterProblem) -> Vec<FlightPrice> {
-        vec![
-            FlightPrice {
-                flight: Flight {
-                    src: "YVR".to_string(),
-                    dest: "HND".to_string(),
-                    date: Date::new(6, 6, 2023),
-                },
-                price: 300.0,
-            },
-            FlightPrice {
-                flight: Flight {
-                    src: "HND".to_string(),
-                    dest: "INC".to_string(),
-                    date: Date::new(16, 6, 2023),
-                },
-                price: 200.0,
-            },
-            FlightPrice {
-                flight: Flight {
-                    src: "INC".to_string(),
-                    dest: "BKK".to_string(),
-                    date: Date::new(20, 6, 2023),
-                },
-                price: 150.0,
-            },
-        ]
+        todo!();
     }
 }
 
@@ -64,12 +39,10 @@ impl RouterDb {
         let leg_q = Api::new(vec![LegQuery {
             start: flight.src.clone(),
             end: flight.dest.clone(),
-            date: QueryDateRange::FixedDate(flight.date.clone()),
+            date: flight.date.clone(),
         }]);
 
-        let quotes_res = leg_q.get_prices().await.unwrap();
-
-        quotes_res
+        leg_q.get_prices().await.unwrap()
     }
 
     async fn get_price_for_flight<Api: PriceQuery>(&mut self, flight: Flight) -> f32 {

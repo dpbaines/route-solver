@@ -14,10 +14,11 @@ pub mod Queries {
 
     /// Date range for either the inbound or outbound flight, flexibility on whether the user wants
     /// exact dates, or doesn't card
+    #[derive(Eq, PartialEq, Hash, Clone)]
     pub enum SingleDateRange {
-        Fixed(Date),
         Anytime,
-        Tolerance(Date, u8),
+        FixedDate(Date),
+        DateRange(Date, Date),
     }
 
     /// Contains the inbound and outbound dates for a flight, or the number of days the user wants
@@ -38,7 +39,7 @@ pub mod Queries {
     pub struct Flight {
         pub src: String,
         pub dest: String,
-        pub date: Date,
+        pub date: SingleDateRange,
     }
 
     pub struct FlightPrice {
