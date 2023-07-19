@@ -1,15 +1,7 @@
+//! Main web app module containing web routings to access API etc.
+
 use actix_web::{get, post, web, HttpResponse, Responder};
 use serde::Deserialize;
-
-// #[function_component(App)]
-// pub fn app() -> Html {
-//     html! {
-//         <main>
-//             <h1>{ "Hello World!" }</h1>
-//             <span class="subtitle">{ "from Yew with " }<i class="heart" /></span>
-//         </main>
-//     }
-// }
 
 #[derive(Deserialize)]
 pub struct RouteQuery {

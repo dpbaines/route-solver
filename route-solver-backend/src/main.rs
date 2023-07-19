@@ -1,10 +1,12 @@
+//! Backend crate for pathfinder web app.
+//!
+//! Uses actix to serve the backend functionality, importantly taking in user travel itineraries and optimizing.
+
 pub mod flight_api;
 pub mod router;
 pub mod web_app;
 
 use actix_web::{App, HttpServer};
-
-// use hyper::{Client, Result};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -13,17 +15,3 @@ async fn main() -> std::io::Result<()> {
         .run()
         .await
 }
-
-// #[allow(dead_code)]
-// fn temp() -> Result<(), _> {
-//     println!("Hello, world!");
-//     let client = Client::new();
-//     let uri = "http://httpbin.org/ip".parse()?;
-//     let resp = client.get(uri).await?;
-//
-//     let body_bytes = hyper::body::to_bytes(resp.into_body()).await?;
-//     let st = String::from_utf8(body_bytes.to_vec()).unwrap();
-//     println!("Response: {}", st);
-//
-//     Ok(())
-// }

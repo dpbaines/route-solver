@@ -1,3 +1,7 @@
+//! Flight API module to communicate to API.
+//!
+//! Handles communication with flight pricing API, right now we use the SkyScanner REST API.
+
 use route_solver_shared::Queries::{Date, SingleDateRange};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{collections::HashMap, time};

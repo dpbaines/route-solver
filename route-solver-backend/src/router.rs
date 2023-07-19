@@ -1,3 +1,7 @@
+//! The router module handles taking the flight itineraries, querying for pricing data and computing optimal travel routes.
+//!
+//! todo: Explain algorithm
+
 use std::collections::HashMap;
 
 use crate::flight_api::{LegQuery, PriceQuery, Quote};
@@ -12,6 +16,7 @@ struct RouterProblem {
     dest_list: Vec<Destination>,
 }
 
+/// Main router class, maintains a database of already seen prices.
 struct Router {
     db: RouterDb,
 }
@@ -23,6 +28,7 @@ impl Router {
         }
     }
 
+    /// Main solver routine, takes in problem and outputs route.
     fn calc(&self, problem: RouterProblem) -> Vec<FlightPrice> {
         todo!();
     }
