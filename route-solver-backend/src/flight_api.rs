@@ -77,7 +77,6 @@ impl Serialize for LegQuery {
             &HashMap::from([("queryPlace", &HashMap::from([("iata", self.end.clone())]))]),
         )?;
         match &self.date {
-            SingleDateRange::Anytime => state.serialize_field("anytime", &true),
             SingleDateRange::FixedDate(date) => state.serialize_field(
                 "fixedDate",
                 &HashMap::from([

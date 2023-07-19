@@ -2,7 +2,11 @@
 //!
 //! todo: Explain algorithm
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{BTreeSet, HashMap},
+    rc::Rc,
+};
 
 use crate::flight_api::{LegQuery, PriceQuery, Quote};
 use route_solver_shared::Queries::*;
@@ -44,13 +48,29 @@ impl Router {
     ///     a. A ```Flight``` represents a src/dest with a date of travel
     ///     b. Each node on the graph represents a flight with a cost of that flight (lazy calculated)
     /// 2. Djikstra search from SRC to DEST anchor
-    fn calc(&self, problem: RouterProblem) -> Vec<FlightPrice> {
-        let graph_root = self.construct_graph(problem);
+    fn calc(&mut self, problem: RouterProblem) -> Vec<FlightPrice> {
+        let _graph_root = self.construct_graph(problem);
 
         todo!();
     }
 
-    fn construct_graph(&mut self, problem: RouterProblem) -> FlightNode {}
+    /// Helper function to graph constructor, recursively generates the DAG ensuring that constraints are met.
+    fn construct_graph_helper(
+        &mut self,
+        dest: &Destination,
+        remaining_dests: &BTreeSet<Destination>,
+    ) -> Option<FlightNode> {
+        todo!();
+    }
+
+    fn construct_graph(&mut self, problem: RouterProblem) -> FlightNode {
+        // For a router problem, the anchors SRC and DEST are given at the front and back respectively of the Destination list, grab these
+        let src = problem.dest_list[0].clone();
+        let dest = problem.dest_list.last().cloned();
+        let inter_dests_sl = &problem.dest_list[1..(problem.dest_list.len() - 1)];
+
+        todo!();
+    }
 }
 
 impl RouterDb {
