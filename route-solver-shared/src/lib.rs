@@ -1,5 +1,5 @@
 pub mod queries {
-    use std::cmp::Ordering;
+    use std::cmp::{max, min, Ordering};
 
     #[derive(Debug, Eq, PartialEq, Hash, Clone)]
     pub struct Date {
@@ -35,6 +35,12 @@ pub mod queries {
             }
 
             Some(Ordering::Equal)
+        }
+    }
+
+    impl std::cmp::Ord for Date {
+        fn cmp(&self, other: &Self) -> Ordering {
+            return self.partial_cmp(other).unwrap();
         }
     }
 
@@ -78,6 +84,7 @@ pub mod queries {
     /// exact dates, or doesn't card
     #[derive(Eq, PartialEq, Hash, Clone)]
     pub enum SingleDateRange {
+        None,
         FixedDate(Date),
         DateRange(Date, Date),
     }
@@ -98,6 +105,33 @@ pub mod queries {
                     date_range: &self,
                     curr_date: Some(d1.clone()),
                 },
+                _ => SingleDateRangeIter {
+                    date_range: &self,
+                    curr_date: None,
+                },
+            }
+        }
+
+        /// Given a date truncate all dates before (inclusive) the given date.
+        pub fn truncate(&self, date: Date) -> Self {
+            match self {
+                Self::FixedDate(d) => {
+                    if *d > date {
+                        return SingleDateRange::FixedDate(d.clone());
+                    } else {
+                        return SingleDateRange::None;
+                    }
+                }
+                Self::DateRange(d1, d2) => {
+                    if *d2 > date {
+                        // Don't particularly care if we return a date range where before and after are the same day
+                        // Shouldn't cause issues, but if it does fix here
+                        return SingleDateRange::DateRange(max(d1.clone(), date + 1), d2.clone());
+                    } else {
+                        return SingleDateRange::None;
+                    }
+                }
+                Self::None => Self::None,
             }
         }
     }
@@ -143,6 +177,7 @@ pub mod queries {
                         return None;
                     }
                 }
+                SingleDateRange::None => return None,
             }
         }
     }
