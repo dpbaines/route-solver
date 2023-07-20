@@ -138,17 +138,14 @@ pub mod queries {
 
     /// Contains the inbound and outbound dates for a flight, or the number of days the user wants
     #[derive(Clone)]
-    pub enum DateRange {
-        Date(SingleDateRange, SingleDateRange),
-        NumberOfDays(u16),
-    }
+    pub struct DateRange(SingleDateRange, SingleDateRange);
 
     /// Represents a single destination, as the IATA (airport code), and a date range which gives
     /// flexibility on when the user wants to go
     #[derive(Clone)]
     pub struct Destination {
-        iata: String,
-        dates: DateRange,
+        pub iata: String,
+        pub dates: DateRange,
     }
 
     impl<'a> Iterator for SingleDateRangeIter<'a> {
@@ -187,7 +184,7 @@ pub mod queries {
     pub struct Flight {
         pub src: String,
         pub dest: String,
-        pub date: SingleDateRange,
+        pub date: Date,
     }
 
     pub struct FlightPrice {
