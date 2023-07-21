@@ -112,6 +112,50 @@ pub mod queries {
             }
         }
 
+        pub fn get_low_high(&self) -> Option<(Date, Date)> {
+            let low_s = match self {
+                SingleDateRange::FixedDate(d) => d,
+                SingleDateRange::DateRange(d1, _) => d1,
+                SingleDateRange::None => return None,
+            };
+
+            let high_s = match self {
+                SingleDateRange::FixedDate(d) => d,
+                SingleDateRange::DateRange(_, d2) => d2,
+                SingleDateRange::None => return None,
+            };
+
+            Some((low_s.clone(), high_s.clone()))
+        }
+
+        pub fn intersect(&self, other: &SingleDateRange) -> SingleDateRange {
+            let s_hl = self.get_low_high();
+            let o_hl = other.get_low_high();
+
+            let (self_low, self_high) = match s_hl {
+                Some((h, l)) => (h, l),
+                None => return SingleDateRange::None,
+            };
+
+            let (other_low, other_high) = match o_hl {
+                Some((h, l)) => (h, l),
+                None => return SingleDateRange::None,
+            };
+
+            let low_inter = max(self_low, other_low);
+            let high_inter = min(self_high, other_high);
+
+            if low_inter > high_inter {
+                return SingleDateRange::None;
+            };
+
+            if low_inter == high_inter {
+                return SingleDateRange::FixedDate(low_inter);
+            };
+
+            SingleDateRange::DateRange(low_inter, high_inter)
+        }
+
         /// Given a date truncate all dates before (inclusive) the given date.
         pub fn truncate(&self, date: Date) -> Self {
             match self {
