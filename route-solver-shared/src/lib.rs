@@ -82,7 +82,7 @@ pub mod queries {
 
     /// Date range for either the inbound or outbound flight, flexibility on whether the user wants
     /// exact dates, or doesn't card
-    #[derive(Eq, PartialEq, Hash, Clone)]
+    #[derive(Debug, Eq, PartialEq, Hash, Clone)]
     pub enum SingleDateRange {
         None,
         FixedDate(Date),
@@ -284,5 +284,49 @@ mod tests {
         assert_eq!(d_r_iter.next(), Some(Date::new(4, 3, 2023)));
         assert_eq!(d_r_iter.next(), Some(Date::new(5, 3, 2023)));
         assert_eq!(d_r_iter.next(), None);
+    }
+
+    #[test]
+    fn test_date_range_intersect() {
+        let d_fixed_fixed_no1 = SingleDateRange::FixedDate(Date::new(3, 3, 2023));
+        let d_fixed_fixed_no2 = SingleDateRange::FixedDate(Date::new(4, 3, 2023));
+
+        assert_eq!(
+            d_fixed_fixed_no1.intersect(&d_fixed_fixed_no2),
+            SingleDateRange::None
+        );
+
+        let d_fixed_fixed1 = SingleDateRange::FixedDate(Date::new(3, 3, 2023));
+        let d_fixed_fixed2 = SingleDateRange::FixedDate(Date::new(3, 3, 2023));
+
+        assert_eq!(
+            d_fixed_fixed1.intersect(&d_fixed_fixed2),
+            SingleDateRange::FixedDate(Date::new(3, 3, 2023))
+        );
+
+        let d_none1 = SingleDateRange::None;
+        let d_none2 = SingleDateRange::FixedDate(Date::new(3, 3, 2023));
+
+        assert_eq!(d_none1.intersect(&d_none2), SingleDateRange::None);
+
+        let d_range_range1 =
+            SingleDateRange::DateRange(Date::new(3, 3, 2023), Date::new(10, 3, 2023));
+        let d_range_range2 =
+            SingleDateRange::DateRange(Date::new(6, 3, 2023), Date::new(18, 3, 2023));
+
+        assert_eq!(
+            d_range_range1.intersect(&d_range_range2),
+            SingleDateRange::DateRange(Date::new(6, 3, 2023), Date::new(10, 3, 2023))
+        );
+
+        let d_range_range_subset1 =
+            SingleDateRange::DateRange(Date::new(3, 3, 2023), Date::new(18, 3, 2023));
+        let d_range_range_subset2 =
+            SingleDateRange::DateRange(Date::new(6, 3, 2023), Date::new(10, 3, 2023));
+
+        assert_eq!(
+            d_range_range_subset1.intersect(&d_range_range_subset2),
+            SingleDateRange::DateRange(Date::new(6, 3, 2023), Date::new(10, 3, 2023))
+        );
     }
 }

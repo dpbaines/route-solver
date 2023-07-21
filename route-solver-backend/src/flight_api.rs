@@ -2,7 +2,7 @@
 //!
 //! Handles communication with flight pricing API, right now we use the SkyScanner REST API.
 
-use route_solver_shared::Queries::{Date, SingleDateRange};
+use route_solver_shared::queries::{Date, SingleDateRange};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{collections::HashMap, time};
 use thiserror::Error;
@@ -77,6 +77,9 @@ impl Serialize for LegQuery {
             &HashMap::from([("queryPlace", &HashMap::from([("iata", self.end.clone())]))]),
         )?;
         match &self.date {
+            SingleDateRange::None => {
+                panic!("Should not be sending a single date range none type to sky scanner")
+            }
             SingleDateRange::FixedDate(date) => state.serialize_field(
                 "fixedDate",
                 &HashMap::from([
@@ -260,7 +263,7 @@ impl PriceQuery for TestPriceApiQuery {
 
 #[cfg(test)]
 mod flight_api_tests {
-    use route_solver_shared::Queries::Date;
+    use route_solver_shared::queries::Date;
 
     use crate::flight_api::LegQuery;
     use crate::flight_api::SingleDateRange;

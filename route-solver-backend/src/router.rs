@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::flight_api::{LegQuery, PriceQuery, Quote};
-use route_solver_shared::Queries::*;
+use route_solver_shared::queries::*;
 
 struct RouterDb {
     price_db: HashMap<Flight, f32>,
@@ -84,7 +84,7 @@ impl RouterDb {
         let leg_q = Api::new(vec![LegQuery {
             start: flight.src.clone(),
             end: flight.dest.clone(),
-            date: flight.date.clone(),
+            date: SingleDateRange::FixedDate(flight.date.clone()),
         }]);
 
         leg_q.get_prices().await.unwrap()

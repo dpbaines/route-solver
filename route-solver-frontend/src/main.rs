@@ -1,4 +1,4 @@
-use route_solver_shared::Queries::*;
+use route_solver_shared::queries::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestInit, RequestMode, Response};
 use yew::prelude::*;
@@ -177,7 +177,7 @@ fn itin_list() -> Html {
             opts.method("POST");
             let request = Request::new_with_str_and_init("runflights", &opts).unwrap();
             let window = web_sys::window().unwrap();
-            let resp_value = JsFuture::from(window.fetch_with_request(&request)).await?;
+            // let resp_value = JsFuture::from(window.fetch_with_request(&request)).await?;
         })
     };
 
