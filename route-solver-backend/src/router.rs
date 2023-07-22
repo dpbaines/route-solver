@@ -57,9 +57,12 @@ impl Router {
     /// Helper function to graph constructor, recursively generates the DAG ensuring that constraints are met.
     fn construct_graph_helper(
         &mut self,
-        dest: &Destination,
+        src: &FlightNode,
         remaining_dests: &BTreeSet<Destination>,
     ) -> Option<FlightNode> {
+        for next_dest in remaining_dests {
+            for possible_dates in next_dest.dates.1.intersect(src.flight.date).iter() {}
+        }
         todo!();
     }
 
