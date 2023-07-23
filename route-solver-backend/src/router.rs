@@ -5,7 +5,8 @@
 use std::{
     cell::RefCell,
     cmp::Ordering,
-    collections::{BTreeSet, BinaryHeap, HashMap},
+    collections::{BTreeSet, BinaryHeap, HashMap, HashSet},
+    error::Error,
     rc::Rc,
     slice,
 };
@@ -52,10 +53,33 @@ impl Router {
     ///     a. A ```Flight``` represents a src/dest with a date of travel
     ///     b. Each node on the graph represents a flight with a cost of that flight (lazy calculated)
     /// 2. Djikstra search from SRC to DEST anchor
-    fn calc(&mut self, problem: RouterProblem) -> Vec<FlightPrice> {
-        // let _graph_root = self.construct_graph(problem);
+    async fn calc(&mut self, problem: RouterProblem) -> Vec<FlightPrice> {
+        let problem_res = self.perform_graph_search(problem).await;
 
-        todo!();
+        // For now panic if flight not possible
+        let problem_res_unwrap = problem_res.unwrap();
+        problem_res_unwrap
+            .iter()
+            .map(|f| FlightPrice {
+                flight: f.flight.clone(),
+                price: f.price.unwrap(),
+            })
+            .collect()
+    }
+
+    fn backtrace_helper(&mut self, curr_node: Rc<FlightNode>, output: &mut Vec<Rc<FlightNode>>) {
+        if let Some(prev) = &curr_node.prev {
+            self.backtrace_helper(Rc::clone(prev), output);
+        }
+
+        output.push(curr_node);
+    }
+
+    fn backtrace_node(&mut self, final_node: Rc<FlightNode>) -> Vec<Rc<FlightNode>> {
+        let mut output_vec = Vec::<Rc<FlightNode>>::new();
+        self.backtrace_helper(final_node, &mut output_vec);
+
+        output_vec
     }
 
     async fn expand_node<'a>(
@@ -63,9 +87,18 @@ impl Router {
         src: Rc<FlightNode>,
         src_dr: &SingleDateRange,
         remaining_dests: slice::Iter<'a, Destination>,
+        final_node: &Destination,
         main_queue: &mut BinaryHeap<Rc<FlightNode>>,
     ) {
-        for next_dest in remaining_dests {
+        let final_node_v = vec![final_node.clone()];
+
+        let potential_children = if remaining_dests.len() == 0 {
+            final_node_v.iter()
+        } else {
+            remaining_dests
+        };
+
+        for next_dest in potential_children {
             for possible_date in next_dest.dates.1.intersect(src_dr).iter() {
                 // Create next nodes
                 let flight = Flight {
@@ -92,13 +125,24 @@ impl Router {
         }
     }
 
-    fn perform_graph_search(&mut self, problem: RouterProblem) -> FlightNode {
+    async fn perform_graph_search(
+        &mut self,
+        problem: RouterProblem,
+    ) -> Result<Vec<Rc<FlightNode>>, String> {
         // For a router problem, the anchors SRC and DEST are given at the front and back respectively of the Destination list, grab these
         let src = problem.dest_list[0].clone();
-        let inter_dests_sl = &problem.dest_list[1..];
+        let inter_dests_sl = &problem.dest_list[1..(problem.dest_list.len() - 2)];
+        let final_dest = &problem.dest_list[problem.dest_list.len() - 1];
 
         let mut main_queue = BinaryHeap::<Rc<FlightNode>>::new();
         let init_dest_list = inter_dests_sl.to_vec();
+
+        let dest_date_map = HashMap::<String, DateRange>::from_iter(
+            problem
+                .dest_list
+                .iter()
+                .map(|e| (e.iata.clone(), e.dates.clone())),
+        );
 
         main_queue.push(Rc::new(FlightNode {
             flight: Flight {
@@ -111,11 +155,35 @@ impl Router {
             prev: None,
         }));
 
-        let final_node = loop {
+        let final_node: Rc<FlightNode> = loop {
             let top = main_queue.pop();
-        };
 
-        todo!();
+            if let None = top {
+                break None;
+            }
+
+            let top_n = top.unwrap();
+
+            if top_n.flight.dest == final_dest.iata {
+                break Some(top_n);
+            }
+
+            let src_dr = &dest_date_map.get(&top_n.flight.dest).unwrap().1;
+
+            self.expand_node(
+                top_n,
+                src_dr,
+                init_dest_list.iter(),
+                final_dest,
+                &mut main_queue,
+            )
+            .await;
+        }
+        .ok_or("Itinerary cannot solve, adjust parameters".to_string())?;
+
+        let list_flights = self.backtrace_node(final_node);
+
+        Ok(list_flights)
     }
 }
 

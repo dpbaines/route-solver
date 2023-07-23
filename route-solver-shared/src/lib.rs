@@ -232,8 +232,8 @@ pub mod queries {
     }
 
     pub struct FlightPrice {
-        flight: Flight,
-        price: f32,
+        pub flight: Flight,
+        pub price: f32,
     }
 }
 #[cfg(test)]
