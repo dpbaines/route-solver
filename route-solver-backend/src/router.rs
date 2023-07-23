@@ -144,6 +144,7 @@ impl Router {
                 .map(|e| (e.iata.clone(), e.dates.clone())),
         );
 
+        // TODO: Generalize flight data to be able to include more or less metadata depending on the API
         main_queue.push(Rc::new(FlightNode {
             flight: Flight {
                 src: "".to_string(),
@@ -273,4 +274,4 @@ impl RouterDb {
 mod router_tests {
     #[test]
     fn test_flight_db() {}
-}
+
