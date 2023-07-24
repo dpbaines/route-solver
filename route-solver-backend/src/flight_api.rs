@@ -2,7 +2,7 @@
 //!
 //! Handles communication with flight pricing API, right now we use the SkyScanner REST API.
 
-use route_solver_shared::queries::{Date, SingleDateRange};
+use route_solver_shared::queries::{Date, Flight, SingleDateRange};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{collections::HashMap, time};
 use thiserror::Error;
@@ -11,6 +11,7 @@ const SKYSCANNER_IND_PRICES_ENDPOINT: &str =
     "https://partners.api.skyscanner.net/apiservices/v3/flights/indicative/search";
 const SKYSCANNER_PUB_API_KEY: &str = "sh428739766321522266746152871799";
 
+#[derive(Clone)]
 pub struct LegQuery {
     pub start: String,
     pub end: String,
@@ -31,30 +32,36 @@ pub enum QueryError {
     RateLimitExceeded,
     #[error("Bad response from API.")]
     BadResponse(u16),
+    #[error("[Test only] legs don't exist")]
+    NonExistentLeg,
 }
 
 #[async_trait::async_trait]
 pub trait PriceQuery {
-    fn new(legs: Vec<LegQuery>) -> Self;
-    async fn get_prices(&self) -> Result<Vec<Quote>, QueryError>;
+    fn new() -> Self;
+    async fn get_price(&mut self, flight: Flight) -> Result<Quote, QueryError>;
 }
 
 pub struct SkyScannerApiQuery {
-    curr_query: Query,
+    db: HashMap<Flight, Quote>,
 }
 
-pub struct TestPriceApiQuery;
+pub struct TestPriceApiQuery {
+    data: HashMap<Flight, f32>,
+}
 
 #[derive(Serialize)]
 pub struct Query {
     market: String,
     locale: String,
     currency: String,
-    queryLegs: Vec<LegQuery>,
-    dateTimeGroupingType: String,
+    #[serde(rename = "queryLegs")]
+    query_legs: Vec<LegQuery>,
+    #[serde(rename = "dateTimeGroupingType")]
+    date_time_grouping_type: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Quote {
     pub min_price: f32,
     pub direct: bool,
@@ -120,8 +127,8 @@ impl Query {
             market,
             locale: "en-US".to_string(),
             currency,
-            queryLegs: legs,
-            dateTimeGroupingType: "DATE_TIME_GROUPING_TYPE_UNSPECIFIED".to_string(),
+            query_legs: legs,
+            date_time_grouping_type: "DATE_TIME_GROUPING_TYPE_UNSPECIFIED".to_string(),
         }
     }
 }
@@ -157,10 +164,30 @@ fn skyscanner_quote_to_price(val: &serde_json::Value) -> Result<Quote, QueryErro
 }
 
 impl SkyScannerApiQuery {
-    async fn get_indicative_prices_simplified(&self) -> Result<Vec<Quote>, QueryError> {
+    async fn get_indicative_prices_simplified_retry(
+        &self,
+        legs: Vec<LegQuery>,
+    ) -> Result<Vec<Quote>, QueryError> {
+        loop {
+            let this_resp = self.get_indicative_prices_simplified(legs.clone()).await;
+
+            match this_resp {
+                Err(QueryError::RateLimitExceeded) => {
+                    println!("Flight API rate limit hit, sleeping");
+                    std::thread::sleep(time::Duration::from_millis(250));
+                }
+                _ => break this_resp,
+            };
+        }
+    }
+
+    async fn get_indicative_prices_simplified(
+        &self,
+        legs: Vec<LegQuery>,
+    ) -> Result<Vec<Quote>, QueryError> {
         use serde_json::Value::Object;
 
-        let prices_resp = self.get_indicative_price().await?;
+        let prices_resp = self.get_indicative_price(legs).await?;
         let quotes = &prices_resp["content"]["results"]["quotes"];
 
         let Object(quotes_arr) = quotes else {
@@ -170,8 +197,12 @@ impl SkyScannerApiQuery {
         quotes_arr.values().map(skyscanner_quote_to_price).collect()
     }
 
-    pub async fn get_indicative_price(&self) -> Result<serde_json::Value, QueryError> {
-        let jquery = serde_json::to_string(&self.curr_query);
+    pub async fn get_indicative_price(
+        &self,
+        legs: Vec<LegQuery>,
+    ) -> Result<serde_json::Value, QueryError> {
+        // TODO: Query options configurable
+        let jquery = serde_json::to_string(&Query::new("US".to_string(), "USD".to_string(), legs));
         let jquery = match jquery {
             Ok(s) => {
                 format!("{{ \"query\": {} }}", s)
@@ -216,88 +247,115 @@ impl SkyScannerApiQuery {
 
 #[async_trait::async_trait]
 impl PriceQuery for SkyScannerApiQuery {
-    fn new(legs: Vec<LegQuery>) -> Self {
-        SkyScannerApiQuery {
-            curr_query: Query::new("US".to_string(), "USD".to_string(), legs),
-        }
+    fn new() -> Self {
+        SkyScannerApiQuery { db: HashMap::new() }
     }
 
-    async fn get_prices(&self) -> Result<Vec<Quote>, QueryError> {
-        loop {
-            let this_resp = self.get_indicative_prices_simplified().await;
+    async fn get_price(&mut self, flight: Flight) -> Result<Quote, QueryError> {
+        let leg_q = vec![LegQuery {
+            start: flight.src.clone(),
+            end: flight.dest.clone(),
+            date: SingleDateRange::FixedDate(flight.date.clone()),
+        }];
 
-            match this_resp {
-                Err(QueryError::RateLimitExceeded) => {
-                    println!("Flight API rate limit hit, sleeping");
-                    std::thread::sleep(time::Duration::from_millis(250));
-                }
-                _ => break this_resp,
-            };
+        let db_val = self.db.get(&flight);
+        match db_val {
+            Some(v) => Ok(v.clone()),
+            None => {
+                // Need to query API
+                let quote = self.get_indicative_prices_simplified_retry(leg_q).await?[0];
+                self.db.insert(flight.clone(), quote);
+
+                Ok(quote)
+            }
         }
     }
 }
 
 #[async_trait::async_trait]
 impl PriceQuery for TestPriceApiQuery {
-    fn new(_: Vec<LegQuery>) -> Self {
-        TestPriceApiQuery
+    fn new() -> Self {
+        // Load CSV, populate map
+        let mut rdr = csv::Reader::from_path("test/MockPricingAirline.csv").unwrap();
+        let mut data = HashMap::new();
+
+        // For the input CSV, rows go YYZ, YVR, YYC, SEA
+        let mut row_count: i32 = 0;
+
+        let translate = |i| match i {
+            0 => "YYZ",
+            1 => "YVR",
+            2 => "YYC",
+            3 => "SEA",
+            _ => "WTF",
+        };
+
+        let mut day_count = 1;
+
+        for row in rdr.records() {
+            let record = row.unwrap();
+            for src_idx in 0..4 {
+                let insert = Flight {
+                    src: translate(src_idx).to_string(),
+                    dest: translate(row_count).to_string(),
+                    date: Date::new(day_count, 2, 2023),
+                };
+
+                data.insert(insert, record[src_idx as usize].parse::<f32>().unwrap());
+            }
+
+            row_count = (row_count + 1) % 4;
+            if row_count == 0 {
+                day_count += 1;
+            }
+        }
+
+        TestPriceApiQuery { data }
     }
 
-    async fn get_prices(&self) -> Result<Vec<Quote>, QueryError> {
-        Ok(vec![
-            Quote {
-                min_price: 300.0,
-                direct: true,
-            },
-            Quote {
-                min_price: 400.0,
-                direct: true,
-            },
-            Quote {
-                min_price: 200.0,
-                direct: true,
-            },
-        ])
+    async fn get_price(&mut self, flight: Flight) -> Result<Quote, QueryError> {
+        let val = self.data.get(&flight).ok_or(QueryError::NonExistentLeg)?;
+        Ok(Quote {
+            min_price: *val,
+            direct: false,
+        })
     }
 }
 
 #[cfg(test)]
 mod flight_api_tests {
-    use route_solver_shared::queries::Date;
-
-    use crate::flight_api::LegQuery;
-    use crate::flight_api::SingleDateRange;
     use crate::flight_api::{PriceQuery, SkyScannerApiQuery, TestPriceApiQuery};
+    use route_solver_shared::queries::Date;
+    use route_solver_shared::queries::Flight;
 
     #[tokio::test]
     async fn test_sky_scanner_api_no_fail() {
-        let api = SkyScannerApiQuery::new(vec![LegQuery {
-            start: "JFK".to_string(),
-            end: "YVR".to_string(),
-            date: SingleDateRange::FixedDate(Date::new(10, 8, 2023)),
-        }]);
+        let mut api = SkyScannerApiQuery::new();
 
-        let quotes = api.get_prices().await;
+        let quote = api
+            .get_price(Flight {
+                src: "JFK".to_string(),
+                dest: "YVR".to_string(),
+                date: Date::new(10, 8, 2023),
+            })
+            .await
+            .unwrap();
 
-        assert!(quotes.is_ok());
-
-        if let Ok(res) = quotes {
-            println!("{:?}", res[0]);
-        }
+        println!("{:?}", quote.min_price);
     }
 
     #[tokio::test]
-    async fn test_test_api_returns_static_values() {
-        let api = TestPriceApiQuery;
-        let quotes = api.get_prices().await;
+    async fn test_test_api_returns_basic_values() {
+        let mut api = TestPriceApiQuery::new();
+        let quotes = api
+            .get_price(Flight {
+                src: "YYZ".to_string(),
+                dest: "YYC".to_string(),
+                date: Date::new(1, 2, 2023),
+            })
+            .await
+            .unwrap();
 
-        let Ok(quotes_unwrapped) = quotes else {
-            assert!(false);
-            panic!("What");
-        };
-
-        assert_eq!(quotes_unwrapped[0].min_price, 300.0);
-        assert_eq!(quotes_unwrapped[1].min_price, 400.0);
-        assert_eq!(quotes_unwrapped[2].min_price, 200.0);
+        assert_eq!(quotes.min_price, 300.0);
     }
 }

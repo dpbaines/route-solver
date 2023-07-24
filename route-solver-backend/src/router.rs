@@ -3,21 +3,14 @@
 //! todo: Explain algorithm
 
 use std::{
-    cell::RefCell,
     cmp::Ordering,
-    collections::{BTreeSet, BinaryHeap, HashMap, HashSet},
-    error::Error,
+    collections::{BinaryHeap, HashMap},
     rc::Rc,
     slice,
 };
 
-use crate::flight_api::{LegQuery, PriceQuery, Quote, TestPriceApiQuery};
-use actix_web::error::QueryPayloadError;
+use crate::flight_api::PriceQuery;
 use route_solver_shared::queries::*;
-
-struct RouterDb {
-    price_db: HashMap<Flight, f32>,
-}
 
 struct RouterProblem {
     total_date_range: DateRange,
@@ -25,8 +18,8 @@ struct RouterProblem {
 }
 
 /// Main router class, maintains a database of already seen prices.
-struct Router {
-    db: RouterDb,
+struct Router<Api: PriceQuery> {
+    api: Api,
 }
 
 /// Graph node for main flights graph. The flights graph represents all possible flight/date combinations given the route problem.
@@ -39,11 +32,9 @@ struct FlightNode {
     prev: Option<Rc<FlightNode>>,
 }
 
-impl Router {
-    fn new() -> Router {
-        Router {
-            db: RouterDb::new(),
-        }
+impl<Api: PriceQuery> Router<Api> {
+    fn new() -> Router<Api> {
+        Router { api: Api::new() }
     }
 
     /// Main solver routine, takes in problem and outputs route.
@@ -107,10 +98,7 @@ impl Router {
                     date: possible_date,
                 };
 
-                let price_query = self
-                    .db
-                    .get_price_for_flight::<TestPriceApiQuery>(&flight)
-                    .await;
+                let price_query = self.api.get_price(flight.clone()).await.unwrap().min_price;
 
                 let node = FlightNode {
                     flight,
@@ -235,38 +223,6 @@ impl Ord for FlightNode {
         }
 
         panic!("Comparing empty price");
-    }
-}
-
-impl RouterDb {
-    fn new() -> RouterDb {
-        RouterDb {
-            price_db: HashMap::new(),
-        }
-    }
-
-    async fn query_api<Api: PriceQuery>(&self, flight: &Flight) -> Vec<Quote> {
-        let leg_q = Api::new(vec![LegQuery {
-            start: flight.src.clone(),
-            end: flight.dest.clone(),
-            date: SingleDateRange::FixedDate(flight.date.clone()),
-        }]);
-
-        leg_q.get_prices().await.unwrap()
-    }
-
-    async fn get_price_for_flight<Api: PriceQuery>(&mut self, flight: &Flight) -> f32 {
-        let db_val = self.price_db.get(&flight);
-        match db_val {
-            Some(v) => *v,
-            None => {
-                // Need to query API
-                let quote = self.query_api::<Api>(flight).await[0].min_price;
-                self.price_db.insert(flight.clone(), quote);
-
-                quote
-            }
-        }
     }
 }
 

@@ -224,7 +224,7 @@ pub mod queries {
     }
 
     /// Represents a flight on a given day
-    #[derive(Eq, PartialEq, Hash, Clone)]
+    #[derive(Debug, Eq, PartialEq, Hash, Clone)]
     pub struct Flight {
         pub src: String,
         pub dest: String,
