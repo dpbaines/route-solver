@@ -151,11 +151,18 @@ impl<Api: PriceQuery> Router<Api> {
             let src_dr = &dest_date_map.get(&top_n.flight.dest).unwrap().1;
 
             let filter_pred = |e: &Destination| -> Option<Destination> {
-                let curr_node = Rc::clone(&top_n);
+                // TODO: The way we do this makes having duplicate city entries in itinerary unsupported...
+                let mut curr_node = Rc::clone(&top_n);
+
+                if curr_node.flight.dest == e.iata {
+                    return None;
+                }
                 while let Some(prev) = &curr_node.prev {
                     if prev.flight.dest == e.iata {
                         return None;
                     }
+
+                    curr_node = Rc::clone(&prev);
                 }
 
                 Some(e.clone())
