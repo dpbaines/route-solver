@@ -12,7 +12,6 @@ use crate::flight_api::PriceQuery;
 use route_solver_shared::queries::*;
 
 struct RouterProblem {
-    total_date_range: DateRange,
     dest_list: Vec<Destination>,
 }
 
@@ -30,6 +29,7 @@ struct FlightNode {
     back_price: Option<f32>,
     price: Option<f32>,
     prev: Option<Rc<FlightNode>>,
+    dest_ref: Destination,
 }
 
 impl<Api: PriceQuery> Router<Api> {
@@ -76,12 +76,11 @@ impl<Api: PriceQuery> Router<Api> {
     async fn expand_node(
         &mut self,
         src: Rc<FlightNode>,
-        src_dr: &SingleDateRange,
         remaining_dests: Vec<Destination>,
         main_queue: &mut BinaryHeap<Rc<FlightNode>>,
     ) {
         for next_dest in remaining_dests.iter() {
-            for possible_date in next_dest.dates.0.intersect(src_dr).iter() {
+            for possible_date in next_dest.dates.0.intersect(&src.dest_ref.dates.1).iter() {
                 // Create next nodes
                 let flight = Flight {
                     src: src.flight.dest.clone(),
@@ -96,6 +95,7 @@ impl<Api: PriceQuery> Router<Api> {
                     price: Some(price_query),
                     back_price: Some(src.back_price.unwrap() + price_query),
                     prev: Some(Rc::clone(&src)),
+                    dest_ref: next_dest.clone(),
                 };
 
                 // Insert into queue
@@ -116,13 +116,6 @@ impl<Api: PriceQuery> Router<Api> {
         let mut main_queue = BinaryHeap::<Rc<FlightNode>>::new();
         let init_dest_list = inter_dests_sl.to_vec();
 
-        let dest_date_map = HashMap::<String, DateRange>::from_iter(
-            problem
-                .dest_list
-                .iter()
-                .map(|e| (e.iata.clone(), e.dates.clone())),
-        );
-
         // TODO: Generalize flight data to be able to include more or less metadata depending on the API
         main_queue.push(Rc::new(FlightNode {
             flight: Flight {
@@ -133,10 +126,13 @@ impl<Api: PriceQuery> Router<Api> {
             back_price: Some(0.0),
             price: Some(0.0),
             prev: None,
+            dest_ref: src.clone(),
         }));
 
         let final_node: Rc<FlightNode> = loop {
             let top = main_queue.pop();
+
+            println!("Popping {:?}", top);
 
             if let None = top {
                 break None;
@@ -144,11 +140,9 @@ impl<Api: PriceQuery> Router<Api> {
 
             let top_n = top.unwrap();
 
-            if top_n.flight.dest == final_dest.iata {
+            if top_n.flight.dest == final_dest.iata && top_n.prev.is_some() {
                 break Some(top_n);
             }
-
-            let src_dr = &dest_date_map.get(&top_n.flight.dest).unwrap().1;
 
             let filter_pred = |e: &Destination| -> Option<Destination> {
                 // TODO: The way we do this makes having duplicate city entries in itinerary unsupported...
@@ -175,7 +169,7 @@ impl<Api: PriceQuery> Router<Api> {
             }
 
             // Can afford to linear search path and filter nodes that exist, path's aren't going to be long (hopefully)
-            self.expand_node(Rc::clone(&top_n), src_dr, dest_list, &mut main_queue)
+            self.expand_node(Rc::clone(&top_n), dest_list, &mut main_queue)
                 .await;
         }
         .ok_or("Itinerary cannot solve, adjust parameters".to_string())?;
@@ -242,12 +236,15 @@ mod router_tests {
 
     use route_solver_shared::queries::{Date, DateRange, Destination, Flight, SingleDateRange};
 
-    use crate::flight_api::TestPriceApiQuery;
+    use crate::{flight_api::TestPriceApiQuery, router::RouterProblem};
 
     use super::{FlightNode, Router};
 
     #[tokio::test]
     async fn test_heap_expand() {
+        let node_date_range =
+            SingleDateRange::DateRange(Date::new(2, 2, 2023), Date::new(4, 2, 2023));
+
         let mut router = Router::<TestPriceApiQuery>::new();
         let node_to_expand = Rc::new(FlightNode {
             flight: Flight {
@@ -258,6 +255,10 @@ mod router_tests {
             back_price: Some(0.0),
             price: Some(250.0),
             prev: None,
+            dest_ref: Destination {
+                iata: "YYZ".to_string(),
+                dates: DateRange(SingleDateRange::None, node_date_range),
+            },
         });
 
         let test_dest_vec = vec![
@@ -284,22 +285,13 @@ mod router_tests {
             },
         ];
 
-        let node_date_range =
-            SingleDateRange::DateRange(Date::new(2, 2, 2023), Date::new(4, 2, 2023));
-
         let mut main_queue = BinaryHeap::<Rc<FlightNode>>::new();
 
         router
-            .expand_node(
-                node_to_expand,
-                &node_date_range,
-                test_dest_vec,
-                &mut main_queue,
-            )
+            .expand_node(node_to_expand, test_dest_vec, &mut main_queue)
             .await;
 
         let heap_vec = main_queue.into_vec();
-        println!("{:?}", heap_vec);
 
         assert!(heap_vec
             .iter()
@@ -359,5 +351,55 @@ mod router_tests {
             .is_some());
 
         assert_eq!(heap_vec.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_graph_search() {
+        let mut router = Router::<TestPriceApiQuery>::new();
+
+        // Setup router problem
+        let problem = RouterProblem {
+            dest_list: vec![
+                Destination {
+                    // Source
+                    iata: "YYZ".to_string(),
+                    dates: DateRange(
+                        SingleDateRange::None,
+                        SingleDateRange::DateRange(Date::new(1, 2, 2023), Date::new(3, 2, 2023)),
+                    ),
+                },
+                Destination {
+                    iata: "YVR".to_string(),
+                    dates: DateRange(
+                        SingleDateRange::DateRange(Date::new(2, 2, 2023), Date::new(4, 2, 2023)),
+                        SingleDateRange::DateRange(Date::new(4, 2, 2023), Date::new(7, 2, 2023)),
+                    ),
+                },
+                Destination {
+                    iata: "YYC".to_string(),
+                    dates: DateRange(
+                        SingleDateRange::DateRange(Date::new(3, 2, 2023), Date::new(7, 2, 2023)),
+                        SingleDateRange::DateRange(Date::new(4, 2, 2023), Date::new(7, 2, 2023)),
+                    ),
+                },
+                Destination {
+                    iata: "SEA".to_string(),
+                    dates: DateRange(
+                        SingleDateRange::DateRange(Date::new(5, 2, 2023), Date::new(7, 2, 2023)),
+                        SingleDateRange::DateRange(Date::new(6, 2, 2023), Date::new(7, 2, 2023)),
+                    ),
+                },
+                Destination {
+                    iata: "YYZ".to_string(),
+                    dates: DateRange(
+                        SingleDateRange::FixedDate(Date::new(8, 2, 2023)),
+                        SingleDateRange::None,
+                    ),
+                },
+            ],
+        };
+
+        let result = router.calc(problem).await;
+        println!("{:?}", result);
     }
 }

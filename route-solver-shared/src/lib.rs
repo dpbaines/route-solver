@@ -231,6 +231,7 @@ pub mod queries {
         pub date: Date,
     }
 
+    #[derive(Debug)]
     pub struct FlightPrice {
         pub flight: Flight,
         pub price: f32,
@@ -327,6 +328,16 @@ mod tests {
         assert_eq!(
             d_range_range_subset1.intersect(&d_range_range_subset2),
             SingleDateRange::DateRange(Date::new(6, 3, 2023), Date::new(10, 3, 2023))
+        );
+
+        let d_range_range_shared1 =
+            SingleDateRange::DateRange(Date::new(3, 3, 2023), Date::new(6, 3, 2023));
+        let d_range_range_shared2 =
+            SingleDateRange::DateRange(Date::new(6, 3, 2023), Date::new(10, 3, 2023));
+
+        assert_eq!(
+            d_range_range_shared1.intersect(&d_range_range_shared2),
+            SingleDateRange::FixedDate(Date::new(6, 3, 2023))
         );
     }
 }
