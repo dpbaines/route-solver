@@ -6,7 +6,6 @@ use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashMap},
     rc::Rc,
-    slice,
 };
 
 use crate::flight_api::PriceQuery;
@@ -25,6 +24,7 @@ struct Router<Api: PriceQuery> {
 /// Graph node for main flights graph. The flights graph represents all possible flight/date combinations given the route problem.
 ///
 /// Each node contains a [Flight](route_solver_shared::Queries::Flight), a price, and an child list. Price is lazy loaded to not kill the API.
+#[derive(Debug)]
 struct FlightNode {
     flight: Flight,
     back_price: Option<f32>,
@@ -73,24 +73,15 @@ impl<Api: PriceQuery> Router<Api> {
         output_vec
     }
 
-    async fn expand_node<'a>(
+    async fn expand_node(
         &mut self,
         src: Rc<FlightNode>,
         src_dr: &SingleDateRange,
-        remaining_dests: slice::Iter<'a, Destination>,
-        final_node: &Destination,
+        remaining_dests: Vec<Destination>,
         main_queue: &mut BinaryHeap<Rc<FlightNode>>,
     ) {
-        let final_node_v = vec![final_node.clone()];
-
-        let potential_children = if remaining_dests.len() == 0 {
-            final_node_v.iter()
-        } else {
-            remaining_dests
-        };
-
-        for next_dest in potential_children {
-            for possible_date in next_dest.dates.1.intersect(src_dr).iter() {
+        for next_dest in remaining_dests.iter() {
+            for possible_date in next_dest.dates.0.intersect(src_dr).iter() {
                 // Create next nodes
                 let flight = Flight {
                     src: src.flight.dest.clone(),
@@ -159,14 +150,26 @@ impl<Api: PriceQuery> Router<Api> {
 
             let src_dr = &dest_date_map.get(&top_n.flight.dest).unwrap().1;
 
-            self.expand_node(
-                top_n,
-                src_dr,
-                init_dest_list.iter(),
-                final_dest,
-                &mut main_queue,
-            )
-            .await;
+            let filter_pred = |e: &Destination| -> Option<Destination> {
+                let curr_node = Rc::clone(&top_n);
+                while let Some(prev) = &curr_node.prev {
+                    if prev.flight.dest == e.iata {
+                        return None;
+                    }
+                }
+
+                Some(e.clone())
+            };
+
+            let mut dest_list: Vec<Destination> =
+                init_dest_list.iter().filter_map(filter_pred).collect();
+            if dest_list.len() == 0 {
+                dest_list.push(final_dest.clone());
+            }
+
+            // Can afford to linear search path and filter nodes that exist, path's aren't going to be long (hopefully)
+            self.expand_node(Rc::clone(&top_n), src_dr, dest_list, &mut main_queue)
+                .await;
         }
         .ok_or("Itinerary cannot solve, adjust parameters".to_string())?;
 
@@ -228,6 +231,126 @@ impl Ord for FlightNode {
 
 #[cfg(test)]
 mod router_tests {
-    #[test]
-    fn test_flight_db() {}
+    use std::{collections::BinaryHeap, rc::Rc};
+
+    use route_solver_shared::queries::{Date, DateRange, Destination, Flight, SingleDateRange};
+
+    use crate::flight_api::TestPriceApiQuery;
+
+    use super::{FlightNode, Router};
+
+    #[tokio::test]
+    async fn test_heap_expand() {
+        let mut router = Router::<TestPriceApiQuery>::new();
+        let node_to_expand = Rc::new(FlightNode {
+            flight: Flight {
+                src: "YYZ".to_string(),
+                dest: "YVR".to_string(),
+                date: Date::new(1, 2, 2023),
+            },
+            back_price: Some(0.0),
+            price: Some(250.0),
+            prev: None,
+        });
+
+        let test_dest_vec = vec![
+            Destination {
+                iata: "YYC".to_string(),
+                dates: DateRange(
+                    SingleDateRange::FixedDate(Date::new(3, 2, 2023)),
+                    SingleDateRange::None,
+                ),
+            },
+            Destination {
+                iata: "SEA".to_string(),
+                dates: DateRange(
+                    SingleDateRange::DateRange(Date::new(2, 2, 2023), Date::new(6, 2, 2023)),
+                    SingleDateRange::None,
+                ),
+            },
+            Destination {
+                iata: "YYZ".to_string(),
+                dates: DateRange(
+                    SingleDateRange::FixedDate(Date::new(4, 2, 2023)),
+                    SingleDateRange::None,
+                ),
+            },
+        ];
+
+        let node_date_range =
+            SingleDateRange::DateRange(Date::new(2, 2, 2023), Date::new(4, 2, 2023));
+
+        let mut main_queue = BinaryHeap::<Rc<FlightNode>>::new();
+
+        router
+            .expand_node(
+                node_to_expand,
+                &node_date_range,
+                test_dest_vec,
+                &mut main_queue,
+            )
+            .await;
+
+        let heap_vec = main_queue.into_vec();
+        println!("{:?}", heap_vec);
+
+        assert!(heap_vec
+            .iter()
+            .find(|e| {
+                e.flight
+                    == Flight {
+                        src: "YVR".to_string(),
+                        dest: "YYC".to_string(),
+                        date: Date::new(3, 2, 2023),
+                    }
+            })
+            .is_some());
+
+        assert!(heap_vec
+            .iter()
+            .find(|e| {
+                e.flight
+                    == Flight {
+                        src: "YVR".to_string(),
+                        dest: "SEA".to_string(),
+                        date: Date::new(2, 2, 2023),
+                    }
+            })
+            .is_some());
+        assert!(heap_vec
+            .iter()
+            .find(|e| {
+                e.flight
+                    == Flight {
+                        src: "YVR".to_string(),
+                        dest: "SEA".to_string(),
+                        date: Date::new(3, 2, 2023),
+                    }
+            })
+            .is_some());
+        assert!(heap_vec
+            .iter()
+            .find(|e| {
+                e.flight
+                    == Flight {
+                        src: "YVR".to_string(),
+                        dest: "SEA".to_string(),
+                        date: Date::new(4, 2, 2023),
+                    }
+            })
+            .is_some());
+        assert!(heap_vec
+            .iter()
+            .find(|e| {
+                e.flight
+                    == Flight {
+                        src: "YVR".to_string(),
+                        dest: "YYZ".to_string(),
+                        date: Date::new(4, 2, 2023),
+                    }
+            })
+            .is_some());
+
+        assert_eq!(heap_vec.len(), 5);
+    }
 }

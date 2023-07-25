@@ -181,12 +181,12 @@ pub mod queries {
     }
 
     /// Contains the inbound and outbound dates for a flight, or the number of days the user wants
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     pub struct DateRange(pub SingleDateRange, pub SingleDateRange);
 
     /// Represents a single destination, as the IATA (airport code), and a date range which gives
     /// flexibility on when the user wants to go
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     pub struct Destination {
         pub iata: String,
         pub dates: DateRange,
