@@ -1,5 +1,8 @@
 pub mod queries {
-    use std::cmp::{max, min, Ordering};
+    use std::{
+        cmp::{max, min, Ordering},
+        fmt,
+    };
 
     #[derive(Debug, Eq, PartialEq, Hash, Clone)]
     pub struct Date {
@@ -11,6 +14,12 @@ pub mod queries {
     impl Date {
         pub fn new(day: u16, month: u16, year: u16) -> Date {
             Date { day, month, year }
+        }
+    }
+
+    impl fmt::Display for Date {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}/{}/{}", self.day, self.month, self.year)
         }
     }
 
@@ -80,6 +89,12 @@ pub mod queries {
         }
     }
 
+    pub trait IteratableDateRange {
+        type IterName;
+
+        fn iter(&self, start_date: Date) -> Box<dyn Iterator<Item = Self::IterName>>;
+    }
+
     /// Date range for either the inbound or outbound flight, flexibility on whether the user wants
     /// exact dates, or doesn't card
     #[derive(Debug, Eq, PartialEq, Hash, Clone)]
@@ -89,29 +104,69 @@ pub mod queries {
         DateRange(Date, Date),
     }
 
-    pub struct SingleDateRangeIter<'a> {
-        date_range: &'a SingleDateRange,
+    /// Wrapper struct representing a flat number of days
+    #[derive(Clone, Debug)]
+    pub struct NumDays(pub u16);
+
+    pub struct NumberOfDaysIter {
+        start_date: Date,
+        curr_date: Date,
+        num_days: u16,
+    }
+
+    impl IteratableDateRange for NumDays {
+        type IterName = Date;
+
+        fn iter(&self, start_date: Date) -> Box<dyn Iterator<Item = Self::IterName>> {
+            Box::new(NumberOfDaysIter {
+                start_date: start_date.clone(),
+                curr_date: start_date,
+                num_days: self.0,
+            })
+        }
+    }
+
+    impl Iterator for NumberOfDaysIter {
+        type Item = Date;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.curr_date >= (self.start_date.clone() + self.num_days) {
+                None
+            } else {
+                let val = Some(self.curr_date.clone());
+                self.curr_date = self.curr_date.clone() + 1;
+                val
+            }
+        }
+    }
+
+    pub struct SingleDateRangeIter {
+        date_range: SingleDateRange,
         curr_date: Option<Date>,
     }
 
-    impl SingleDateRange {
-        pub fn iter(&self) -> SingleDateRangeIter {
-            match self {
+    impl IteratableDateRange for SingleDateRange {
+        type IterName = Date;
+
+        fn iter(&self, _: Date) -> Box<dyn Iterator<Item = Self::IterName>> {
+            Box::new(match self {
                 Self::FixedDate(d) => SingleDateRangeIter {
-                    date_range: &self,
+                    date_range: self.clone(),
                     curr_date: Some(d.clone()),
                 },
                 Self::DateRange(d1, _) => SingleDateRangeIter {
-                    date_range: &self,
+                    date_range: self.clone(),
                     curr_date: Some(d1.clone()),
                 },
                 _ => SingleDateRangeIter {
-                    date_range: &self,
+                    date_range: self.clone(),
                     curr_date: None,
                 },
-            }
+            })
         }
+    }
 
+    impl SingleDateRange {
         pub fn get_low_high(&self) -> Option<(Date, Date)> {
             let low_s = match self {
                 SingleDateRange::FixedDate(d) => d,
@@ -184,19 +239,26 @@ pub mod queries {
     #[derive(Clone, Debug)]
     pub struct DateRange(pub SingleDateRange, pub SingleDateRange);
 
+    /// Possibilities for vacation dates
+    #[derive(Clone, Debug)]
+    pub enum DateConstraint {
+        DateRange(SingleDateRange, SingleDateRange),
+        NumberOfDays(NumDays),
+    }
+
     /// Represents a single destination, as the IATA (airport code), and a date range which gives
     /// flexibility on when the user wants to go
     #[derive(Clone, Debug)]
     pub struct Destination {
         pub iata: String,
-        pub dates: DateRange,
+        pub dates: DateConstraint,
     }
 
-    impl<'a> Iterator for SingleDateRangeIter<'a> {
+    impl Iterator for SingleDateRangeIter {
         type Item = Date;
 
         fn next(&mut self) -> Option<Self::Item> {
-            match self.date_range {
+            match &self.date_range {
                 SingleDateRange::FixedDate(_) => {
                     if let Some(d) = self.curr_date.clone() {
                         self.curr_date = None;
@@ -239,7 +301,7 @@ pub mod queries {
 }
 #[cfg(test)]
 mod tests {
-    use crate::queries::{Date, SingleDateRange};
+    use crate::queries::{Date, IteratableDateRange, NumDays, SingleDateRange};
 
     #[test]
     fn test_date_adding() {
@@ -273,18 +335,28 @@ mod tests {
     #[test]
     fn test_date_range_iter() {
         let d_fixed_range = SingleDateRange::FixedDate(Date::new(3, 3, 2023));
-        let mut d_iter = d_fixed_range.iter();
+        let mut d_iter = d_fixed_range.iter(Date::new(3, 3, 2023));
 
         assert_eq!(d_iter.next(), Some(Date::new(3, 3, 2023)));
         assert_eq!(d_iter.next(), None);
 
         let d_range = SingleDateRange::DateRange(Date::new(3, 3, 2023), Date::new(5, 3, 2023));
-        let mut d_r_iter = d_range.iter();
+        let mut d_r_iter = d_range.iter(Date::new(3, 3, 2023));
 
         assert_eq!(d_r_iter.next(), Some(Date::new(3, 3, 2023)));
         assert_eq!(d_r_iter.next(), Some(Date::new(4, 3, 2023)));
         assert_eq!(d_r_iter.next(), Some(Date::new(5, 3, 2023)));
         assert_eq!(d_r_iter.next(), None);
+    }
+
+    #[test]
+    fn test_num_days_iter() {
+        let two_days = NumDays(2);
+
+        let mut iter = two_days.iter(Date::new(1, 3, 2023));
+        assert_eq!(iter.next(), Some(Date::new(1, 3, 2023)));
+        assert_eq!(iter.next(), Some(Date::new(2, 3, 2023)));
+        assert_eq!(iter.next(), None);
     }
 
     #[test]
