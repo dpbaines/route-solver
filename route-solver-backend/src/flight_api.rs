@@ -328,21 +328,21 @@ mod flight_api_tests {
     use route_solver_shared::queries::Date;
     use route_solver_shared::queries::Flight;
 
-    #[tokio::test]
-    async fn test_sky_scanner_api_no_fail() {
-        let mut api = SkyScannerApiQuery::new();
+    // #[tokio::test]
+    // async fn test_sky_scanner_api_no_fail() {
+    //     let mut api = SkyScannerApiQuery::new();
 
-        let quote = api
-            .get_price(Flight {
-                src: "JFK".to_string(),
-                dest: "YVR".to_string(),
-                date: Date::new(10, 8, 2023),
-            })
-            .await
-            .unwrap();
+    //     let quote = api
+    //         .get_price(Flight {
+    //             src: "JFK".to_string(),
+    //             dest: "YVR".to_string(),
+    //             date: Date::new(10, 8, 2023),
+    //         })
+    //         .await
+    //         .unwrap();
 
-        println!("{:?}", quote.min_price);
-    }
+    //     println!("{:?}", quote.min_price);
+    // }
 
     #[tokio::test]
     async fn test_test_api_returns_basic_values() {

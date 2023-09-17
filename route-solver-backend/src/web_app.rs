@@ -21,6 +21,7 @@ pub async fn hello() -> impl Responder {
     HttpResponse::Ok().body("Frontend TBD")
 }
 
+/// Endpoint for running route computation
 #[post("/compute_route")]
 pub async fn compute(json: web::Json<RouteQuery>) -> impl Responder {
     HttpResponse::Ok().body(format!(
