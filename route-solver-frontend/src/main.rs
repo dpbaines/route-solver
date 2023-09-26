@@ -1,7 +1,15 @@
+use std::{
+    error::Error,
+    fmt::{self, Display, Formatter},
+    rc::Rc,
+};
+
+use log::info;
 use route_solver_shared::queries::*;
+use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestInit, RequestMode, Response};
-use yew::prelude::*;
+use yew::{prelude::*, virtual_dom::Key};
 
 #[derive(Properties, PartialEq)]
 struct TextBoxProps {
@@ -16,21 +24,29 @@ struct ButtonProps {
 }
 
 #[derive(Properties, PartialEq)]
+struct ModalProps {
+    id: String,
+    main_text: String,
+    internal_html: Html,
+}
+
+#[derive(Properties, PartialEq)]
+struct ModalTriggerProps {
+    id: String,
+    text: String,
+}
+
+#[derive(Properties, PartialEq)]
 struct DropDownProps {
     text: String,
     opts: Vec<String>,
     node_ref: NodeRef,
 }
 
-#[derive(PartialEq, Clone)]
-enum ItemType {
-    Fixed(u16),
-}
-
 #[derive(Properties, PartialEq, Clone)]
 struct ItineraryListItemProps {
-    item_type: ItemType,
-    remove_handler: Callback<()>,
+    id: usize,
+    remove_handler: Callback<usize>,
 }
 
 struct ItineraryListItems {
@@ -56,6 +72,41 @@ fn button(ButtonProps { text, on_click }: &ButtonProps) -> Html {
     }
 }
 
+#[function_component(ModalTriggerButton)]
+fn modal_trigger(ModalTriggerProps { id, text }: &ModalTriggerProps) -> Html {
+    html! {
+        <button type={"button"} data-bs-toggle="modal" data-bs-target={ String::from("#") + id } class={"btn btn-primary"}>{ text.clone() }</button>
+    }
+}
+
+#[function_component(Modal)]
+fn modal(
+    ModalProps {
+        id,
+        main_text,
+        internal_html,
+    }: &ModalProps,
+) -> Html {
+    html! {
+      <div id={ id.clone() } class="modal fade" tabindex="-1">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">{ main_text }</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                { internal_html.clone() }
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{ String::from("Close") }</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    }
+}
+
 #[function_component(CloseButton)]
 fn close_button(ButtonProps { text, on_click }: &ButtonProps) -> Html {
     let on_click_fn = {
@@ -65,6 +116,56 @@ fn close_button(ButtonProps { text, on_click }: &ButtonProps) -> Html {
 
     html! {
         <button type={"button"} onclick={on_click_fn} class={"btn-close my-2"} aria-label={text.clone()}></button>
+    }
+}
+
+#[function_component(FlyInComponent)]
+fn fly_in() -> Html {
+    html! {
+        <div class="d-inline-flex">
+            <div class="input-group flex-nowrap pe-2">
+                <span class="input-group-text" id="addon-wrapping">{ "Start" }</span>
+                <input type="date" class="form-control" />
+            </div>
+            <div class="input-group flex-nowrap pe-2">
+                <span class="input-group-text" id="addon-wrapping">{ "End" }</span>
+                <input type="date" class="form-control" />
+            </div>
+        </div>
+    }
+}
+
+#[derive(PartialEq, Clone, Properties)]
+struct ListItemProps {
+    text: String,
+    children: Children,
+}
+
+#[function_component(ListItem)]
+fn list_item(ListItemProps { text, children }: &ListItemProps) -> Html {
+    let open = use_state(|| false);
+    let onopen = {
+        let open = open.clone();
+        Callback::from(move |_| open.set(true))
+    };
+    let onclose = {
+        let open = open.clone();
+        Callback::from(move |_| open.set(false))
+    };
+
+    html! {
+        if !*open {
+            <div class="col-md-auto">
+                <Button text={text.clone()} on_click={onopen} />
+            </div>
+        } else {
+            <div class="col-md-auto my-2">
+                { children.clone() }
+            </div>
+            <div class="col-md-auto my-2">
+                <CloseButton text="Close" on_click={onclose} />
+            </div>
+        }
     }
 }
 
@@ -116,98 +217,112 @@ impl Component for ItineraryRow {
     fn view(&self, ctx: &Context<Self>) -> Html {
         let remove_handler_passthrough = {
             let remove_handler = ctx.props().remove_handler.clone();
+            let id = ctx.props().id;
             Callback::from(move |_| {
-                remove_handler.emit(());
+                remove_handler.emit(id);
             })
         };
 
-        let id = if let ItemType::Fixed(id1) = ctx.props().item_type {
-            id1
-        } else {
-            0
-        };
-
         html! {
-            <div id={ format!("itin-row-{}", id) } class={"row my-2 justify-content-start"}>
-                <div class={"col"}>
-                    <TextBox text={ "Airport Code" } node_ref={ self.node_refs[0].clone() } />
-                </div>
-                <div class={"col-md-auto"}>
-                    <DropDown text={ "Flexibility" } opts={ vec!["Dates".to_string(), "Rough number of Days".to_string()]} node_ref={ self.node_refs[1].clone() } />
-                </div>
-                <div class={"col"}>
-                    <TextBox text={ "Start Date" } node_ref={ self.node_refs[2].clone() } />
-                </div>
-                <div class={"col"}>
-                    <TextBox text={ "End Date" } node_ref={ self.node_refs[3].clone() } />
-                </div>
-                <div class={"col"}>
-                    <CloseButton text="Close" on_click={remove_handler_passthrough} />
+            <div id={ format!("itin-row-{}", ctx.props().id) } class={"row my-1 justify-content-start bg-body-secondary p-1 rounded-3"}>
+                <div class="container p-2">
+                    <div class="row justify-content-start">
+                        <div class={"col-md-auto"}>
+                            <TextBox text={ "Airport Code" } node_ref={ self.node_refs[0].clone() } />
+                        </div>
+                        <div class={"col-md-auto"}>
+                            <CloseButton text="Close" on_click={remove_handler_passthrough} />
+                        </div>
+                    </div>
+                    <div class="row justify-content-start">
+                        <ListItem text={ "Add fly in dates" }>
+                            <FlyInComponent />
+                        </ListItem>
+                    </div>
+                    <div class="row justify-content-start">
+                        <ListItem text={ "Add fly out dates" }>
+                            <FlyInComponent />
+                        </ListItem>
+                    </div>
+                    <div class="row justify-content-start">
+                        <ListItem text={ "Add other constraints" }>
+                            <FlyInComponent />
+                        </ListItem>
+                    </div>
                 </div>
             </div>
         }
     }
 }
 
-#[function_component(ItineraryList)]
-fn itin_list() -> Html {
-    let default_list = vec![ItemType::Fixed(0), ItemType::Fixed(1), ItemType::Fixed(2)];
+struct ItineraryList {
+    html_list: Vec<(Html, bool)>,
+    curr_count: usize,
+}
 
-    let list_num_hook = use_state(move || default_list);
+enum ItineraryListMessage {
+    AddChild,
+    RemoveChild(usize),
+}
 
-    let on_add_row = {
-        let list_num_hook = list_num_hook.clone();
-        Callback::from(move |_| {
-            let mut li = list_num_hook.to_vec();
-            list_num_hook.set({
-                li.push(ItemType::Fixed(
-                    match li.last().unwrap_or(&ItemType::Fixed(0)) {
-                        ItemType::Fixed(i) => i + 1,
-                        _ => 0,
-                    },
-                ));
-                li
-            })
-        })
-    };
+impl Component for ItineraryList {
+    type Properties = ();
+    type Message = ItineraryListMessage;
 
-    let post_data = {
-        Callback::from(move |_| {
-            let mut opts = RequestInit::new();
-            opts.method("POST");
-            let request = Request::new_with_str_and_init("runflights", &opts).unwrap();
-            let window = web_sys::window().unwrap();
-            // let resp_value = JsFuture::from(window.fetch_with_request(&request)).await?;
-        })
-    };
+    fn create(_ctx: &Context<Self>) -> Self {
+        Self {
+            html_list: vec![],
+            curr_count: 0,
+        }
+    }
 
-    let item_list_html = list_num_hook.iter().enumerate().map(|(idx, item)| {
-        let remove_handler_passthrough = {
-            let list_num_hook = list_num_hook.clone();
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+        match msg {
+            ItineraryListMessage::AddChild => {
+                let link = ctx.link();
+                let count = self.curr_count.clone();
+                self.html_list.push((html! { <ItineraryRow key={ self.curr_count.clone() } id={ self.curr_count.clone() } remove_handler={ link.callback(move |_| ItineraryListMessage::RemoveChild(count)) } /> }, true));
+                self.curr_count += 1;
+            }
+            ItineraryListMessage::RemoveChild(idx) => self.html_list.iter_mut().for_each(|x| {
+                if x.0.key().unwrap().eq(&Key::from(idx)) {
+                    *x = (x.0.clone(), false)
+                }
+            }),
+            // .retain(|x| !x.0.key().unwrap().eq(&Key::from(idx))),
+        };
+
+        true
+    }
+
+    fn view(&self, ctx: &Context<Self>) -> Html {
+        let link = ctx.link();
+
+        let post_data = {
             Callback::from(move |_| {
-                let li = list_num_hook
-                    .iter()
-                    .enumerate()
-                    .filter(|(curr_idx, _)| idx != *curr_idx)
-                    .map(|(_, item_t)| item_t.clone())
-                    .collect::<Vec<ItemType>>();
-                list_num_hook.set(li)
+                let mut opts = RequestInit::new();
+                opts.method("POST");
+                let request = Request::new_with_str_and_init("runflights", &opts).unwrap();
+                let window = web_sys::window().unwrap();
+                // let resp_value = JsFuture::from(window.fetch_with_request(&request)).await?;
             })
         };
 
-        html! {
-            <ItineraryRow item_type={item.clone()} remove_handler={remove_handler_passthrough} />
-        }
-    });
+        let rows = self
+            .html_list
+            .iter()
+            .filter_map(|x| if x.1 { Some(x.0.clone()) } else { None })
+            .collect::<Html>();
 
-    html! {
-        <>
-            { for item_list_html }
-            <div>
-                <Button text={"Add new row"} on_click={on_add_row} />
-                <Button text={"CRUNch it"} on_click={post_data} />
-            </div>
-        </>
+        html! {
+            <>
+                { rows }
+                <div>
+                    <Button text={"Add new row"} on_click={ link.callback(|_| ItineraryListMessage::AddChild) } />
+                    <Button text={"CRUNch it"} on_click={post_data} />
+                </div>
+            </>
+        }
     }
 }
 
@@ -217,6 +332,8 @@ fn main() {
     let itin_box = document
         .get_element_by_id("rust-box")
         .expect("Can't find rust-box");
+
+    wasm_logger::init(wasm_logger::Config::default());
 
     yew::Renderer::<ItineraryList>::with_root(itin_box).render();
 }
