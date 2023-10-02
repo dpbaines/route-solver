@@ -317,9 +317,13 @@ impl Component for ItineraryList {
         html! {
             <>
                 { rows }
-                <div>
-                    <Button text={"Add new row"} on_click={ link.callback(|_| ItineraryListMessage::AddChild) } />
-                    <Button text={"CRUNch it"} on_click={post_data} />
+                <div class="d-flex flex-row">
+                    <div class="pe-2">
+                        <Button text={"Add new row"} on_click={ link.callback(|_| ItineraryListMessage::AddChild) } />
+                    </div>
+                    <div>
+                        <Button text={"Go!"} on_click={post_data} />
+                    </div>
                 </div>
             </>
         }
