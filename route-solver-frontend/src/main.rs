@@ -1,14 +1,15 @@
 use std::{
+    cell::RefCell,
     error::Error,
-    fmt::{self, Display, Formatter},
+    fmt::{self, Debug, Display, Formatter},
     rc::Rc,
 };
 
 use log::info;
 use route_solver_shared::queries::*;
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{Request, RequestInit, RequestMode, Response};
+use web_sys::{HtmlElement, HtmlInputElement, Request, RequestInit, RequestMode, Response};
 use yew::{prelude::*, virtual_dom::Key};
 
 #[derive(Properties, PartialEq)]
@@ -43,10 +44,19 @@ struct DropDownProps {
     node_ref: NodeRef,
 }
 
-#[derive(Properties, PartialEq, Clone)]
-struct ItineraryListItemProps {
-    id: usize,
-    remove_handler: Callback<usize>,
+#[derive(PartialEq, Clone, Default)]
+struct StartEndRefs {
+    start_node: NodeRef,
+    end_node: NodeRef,
+}
+
+impl StartEndRefs {
+    fn get_strings(&self) -> (String, String) {
+        let start_html = self.start_node.cast::<HtmlInputElement>().unwrap().value();
+        let end_html = self.end_node.cast::<HtmlInputElement>().unwrap().value();
+
+        (start_html, end_html)
+    }
 }
 
 struct ItineraryListItems {
@@ -55,8 +65,16 @@ struct ItineraryListItems {
 
 #[function_component(TextBox)]
 fn text_box(TextBoxProps { text, node_ref }: &TextBoxProps) -> Html {
+    let my_text_handle = use_state(|| "".to_string());
+
+    let handle_input = Callback::from(move |input_event: InputEvent| {
+        let input_elem: HtmlInputElement = input_event.target().unwrap().dyn_into().unwrap();
+        let value = input_elem.value();
+        my_text_handle.set(value);
+    });
+
     html! {
-        <input type={"text"} ref={node_ref.clone()} class={"form-control"} placeholder={text.clone()} aria-label={text.clone()} />
+        <input type={"text"} ref={node_ref.clone()} class={"form-control"} placeholder={text.clone()} aria-label={text.clone()} value={my_text_handle.clone()} oninput={handle_input} />
     }
 }
 
@@ -119,17 +137,22 @@ fn close_button(ButtonProps { text, on_click }: &ButtonProps) -> Html {
     }
 }
 
+#[derive(PartialEq, Clone, Properties)]
+struct FlyInProps {
+    node_refs: StartEndRefs,
+}
+
 #[function_component(FlyInComponent)]
-fn fly_in() -> Html {
+fn fly_in(FlyInProps { node_refs }: &FlyInProps) -> Html {
     html! {
         <div class="d-inline-flex">
             <div class="input-group flex-nowrap pe-2">
                 <span class="input-group-text" id="addon-wrapping">{ "Start" }</span>
-                <input type="date" class="form-control" />
+                <input ref={ &node_refs.start_node } type="date" class="form-control" />
             </div>
             <div class="input-group flex-nowrap pe-2">
                 <span class="input-group-text" id="addon-wrapping">{ "End" }</span>
-                <input type="date" class="form-control" />
+                <input ref={ &node_refs.end_node } type="date" class="form-control" />
             </div>
         </div>
     }
@@ -195,23 +218,29 @@ fn dropdown(
     }
 }
 
-struct ItineraryRow {
-    node_refs: Vec<NodeRef>,
+#[derive(PartialEq, Clone, Default)]
+struct ListItemRefs {
+    airport_ref: NodeRef,
+    start_date_refs: StartEndRefs,
+    end_date_refs: StartEndRefs,
+    temp_constraints: StartEndRefs,
 }
+
+#[derive(Properties, PartialEq, Clone)]
+struct ItineraryListItemProps {
+    id: usize,
+    remove_handler: Callback<usize>,
+    list_item_refs: Rc<ListItemRefs>,
+}
+
+struct ItineraryRow {}
 
 impl Component for ItineraryRow {
     type Properties = ItineraryListItemProps;
     type Message = ();
 
     fn create(_ctx: &Context<Self>) -> Self {
-        Self {
-            node_refs: vec![
-                NodeRef::default(),
-                NodeRef::default(),
-                NodeRef::default(),
-                NodeRef::default(),
-            ],
-        }
+        Self {}
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
@@ -228,7 +257,7 @@ impl Component for ItineraryRow {
                 <div class="container p-2">
                     <div class="row justify-content-start">
                         <div class={"col-md-auto"}>
-                            <TextBox text={ "Airport Code" } node_ref={ self.node_refs[0].clone() } />
+                            <TextBox text={ "Airport Code" } node_ref={ &ctx.props().list_item_refs.airport_ref } />
                         </div>
                         <div class={"col-md-auto"}>
                             <CloseButton text="Close" on_click={remove_handler_passthrough} />
@@ -236,17 +265,17 @@ impl Component for ItineraryRow {
                     </div>
                     <div class="row justify-content-start">
                         <ListItem text={ "Add fly in dates" }>
-                            <FlyInComponent />
+                            <FlyInComponent node_refs={ ctx.props().list_item_refs.start_date_refs.clone() } />
                         </ListItem>
                     </div>
                     <div class="row justify-content-start">
                         <ListItem text={ "Add fly out dates" }>
-                            <FlyInComponent />
+                            <FlyInComponent node_refs={ ctx.props().list_item_refs.end_date_refs.clone() } />
                         </ListItem>
                     </div>
                     <div class="row justify-content-start">
                         <ListItem text={ "Add other constraints" }>
-                            <FlyInComponent />
+                            <FlyInComponent node_refs={ ctx.props().list_item_refs.temp_constraints.clone() } />
                         </ListItem>
                     </div>
                 </div>
@@ -258,11 +287,45 @@ impl Component for ItineraryRow {
 struct ItineraryList {
     html_list: Vec<(Html, bool)>,
     curr_count: usize,
+    ref_list: RefCell<Vec<Rc<ListItemRefs>>>,
 }
 
 enum ItineraryListMessage {
     AddChild,
     RemoveChild(usize),
+}
+
+impl ItineraryList {
+    fn get_formatted_text(&self) -> String {
+        self.html_list
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, on))| *on)
+            .map(|(idx, (_, _))| {
+                let row_ref_list = &self.ref_list.borrow()[idx];
+                let airport_code = row_ref_list
+                    .airport_ref
+                    .cast::<HtmlInputElement>()
+                    .unwrap()
+                    .value();
+                let start_dates = row_ref_list.start_date_refs.get_strings();
+                let end_dates = row_ref_list.end_date_refs.get_strings();
+                let temp_dates = row_ref_list.temp_constraints.get_strings();
+
+                format!(
+                    "Airport {} start dates {} {} end dates {} {} temp dates {} {}",
+                    airport_code,
+                    start_dates.0,
+                    start_dates.1,
+                    end_dates.0,
+                    end_dates.1,
+                    temp_dates.0,
+                    temp_dates.1
+                )
+            })
+            .reduce(|acc, e| format!("{}\n{}", acc, e))
+            .unwrap()
+    }
 }
 
 impl Component for ItineraryList {
@@ -273,6 +336,7 @@ impl Component for ItineraryList {
         Self {
             html_list: vec![],
             curr_count: 0,
+            ref_list: RefCell::new(Vec::new()),
         }
     }
 
@@ -281,7 +345,10 @@ impl Component for ItineraryList {
             ItineraryListMessage::AddChild => {
                 let link = ctx.link();
                 let count = self.curr_count.clone();
-                self.html_list.push((html! { <ItineraryRow key={ self.curr_count.clone() } id={ self.curr_count.clone() } remove_handler={ link.callback(move |_| ItineraryListMessage::RemoveChild(count)) } /> }, true));
+                self.ref_list
+                    .borrow_mut()
+                    .push(Rc::new(ListItemRefs::default()));
+                self.html_list.push((html! { <ItineraryRow key={ self.curr_count.clone() } list_item_refs={ self.ref_list.borrow().last().unwrap().clone() } id={ self.curr_count.clone() } remove_handler={ link.callback(move |_| ItineraryListMessage::RemoveChild(count)) } /> }, true));
                 self.curr_count += 1;
             }
             ItineraryListMessage::RemoveChild(idx) => self.html_list.iter_mut().for_each(|x| {
@@ -300,10 +367,14 @@ impl Component for ItineraryList {
 
         let post_data = {
             Callback::from(move |_| {
-                let mut opts = RequestInit::new();
-                opts.method("POST");
-                let request = Request::new_with_str_and_init("runflights", &opts).unwrap();
-                let window = web_sys::window().unwrap();
+                // Get data
+                let test = self.get_formatted_text();
+                // let text = self.get_formatted_text();
+
+                // let mut opts = RequestInit::new();
+                // opts.method("POST");
+                // let request = Request::new_with_str_and_init("runflights", &opts).unwrap();
+                // let window = web_sys::window().unwrap();
                 // let resp_value = JsFuture::from(window.fetch_with_request(&request)).await?;
             })
         };
