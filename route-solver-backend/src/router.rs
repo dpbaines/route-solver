@@ -141,7 +141,7 @@ impl<Api: PriceQuery> Router<Api> {
         main_queue: &mut BinaryHeap<Rc<FlightNode>>,
     ) {
         for next_dest in remaining_dests.iter() {
-            for possible_date in next_dest.dates.0.intersect(&src.dest_ref.dates.1).iter() {
+            for possible_date in next_dest.dates.get_intersect_iter_with_next(&src.dest_ref.dates) {
                 // Create next nodes
                 let flight = Flight {
                     src: src.flight.dest.clone(),
@@ -216,7 +216,7 @@ impl<Api: PriceQuery> Router<Api> {
             flight: Flight {
                 src: "".to_string(),
                 dest: src.iata.clone(),
-                date: Date::new(0, 0, 0),
+                date: Date::from_ymd_opt(0, 0, 0).unwrap(),
             },
             back_price: Some(0.0),
             price: Some(0.0),
@@ -305,7 +305,7 @@ impl Ord for FlightNode {
 mod router_tests {
     use std::{collections::BinaryHeap, rc::Rc};
 
-    use route_solver_shared::queries::{Date, DateRange, Destination, Flight, SingleDateRange};
+    use route_solver_shared::queries::{Date, DateRange, Destination, Flight, SingleDateRange, DateConstraints, DateRestrictions};
 
     use crate::{flight_api::TestPriceApiQuery, router::RouterProblem};
 
@@ -314,45 +314,54 @@ mod router_tests {
     #[tokio::test]
     async fn test_heap_expand() {
         let node_date_range =
-            SingleDateRange::DateRange(Date::new(2, 2, 2023), Date::new(4, 2, 2023));
+            SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 2).unwrap(), Date::from_ymd_opt(2023, 2, 4).unwrap());
 
         let mut router = Router::<TestPriceApiQuery>::new();
         let node_to_expand = Rc::new(FlightNode {
             flight: Flight {
                 src: "YYZ".to_string(),
                 dest: "YVR".to_string(),
-                date: Date::new(1, 2, 2023),
+                date: Date::from_ymd_opt(2023, 2, 1).unwrap(),
             },
             back_price: Some(0.0),
             price: Some(250.0),
             prev: None,
             dest_ref: Destination {
                 iata: "YYZ".to_string(),
-                dates: DateRange(SingleDateRange::None, node_date_range),
+                dates: DateConstraints {
+                    date_range: Some(DateRange(SingleDateRange::None, node_date_range)),
+                    date_restrictions: Rc::new(DateRestrictions::default())
+                }
             },
         });
 
         let test_dest_vec = vec![
             Destination {
                 iata: "YYC".to_string(),
-                dates: DateRange(
-                    SingleDateRange::FixedDate(Date::new(3, 2, 2023)),
-                    SingleDateRange::None,
-                ),
+                dates: DateConstraints {
+                    date_range: Some(DateRange(
+                        SingleDateRange::FixedDate(Date::from_ymd_opt(2023, 2, 3).unwrap()),
+                        SingleDateRange::None)),
+                    date_restrictions: Rc::new(DateRestrictions::default())
+                }
             },
             Destination {
                 iata: "SEA".to_string(),
-                dates: DateRange(
-                    SingleDateRange::DateRange(Date::new(2, 2, 2023), Date::new(6, 2, 2023)),
-                    SingleDateRange::None,
-                ),
+                dates: DateConstraints { 
+                    date_range: Some(DateRange(
+                    SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 2).unwrap(), Date::from_ymd_opt(2023, 2, 6).unwrap()),
+                    SingleDateRange::None)),
+                    date_restrictions: Rc::new(DateRestrictions::default())
+                }
             },
             Destination {
                 iata: "YYZ".to_string(),
-                dates: DateRange(
-                    SingleDateRange::FixedDate(Date::new(4, 2, 2023)),
-                    SingleDateRange::None,
-                ),
+                dates: DateConstraints {
+                    date_range: Some(DateRange(
+                        SingleDateRange::FixedDate(Date::from_ymd_opt(2023, 2, 4).unwrap()),
+                        SingleDateRange::None)),
+                    date_restrictions: Rc::new(DateRestrictions::default())
+                }
             },
         ];
 
@@ -371,7 +380,7 @@ mod router_tests {
                     == Flight {
                         src: "YVR".to_string(),
                         dest: "YYC".to_string(),
-                        date: Date::new(3, 2, 2023),
+                        date: Date::from_ymd_opt(2023, 2, 3).unwrap(),
                     }
             })
             .is_some());
@@ -383,7 +392,7 @@ mod router_tests {
                     == Flight {
                         src: "YVR".to_string(),
                         dest: "SEA".to_string(),
-                        date: Date::new(2, 2, 2023),
+                        date: Date::from_ymd_opt(2023, 2, 2).unwrap(),
                     }
             })
             .is_some());
@@ -394,7 +403,7 @@ mod router_tests {
                     == Flight {
                         src: "YVR".to_string(),
                         dest: "SEA".to_string(),
-                        date: Date::new(3, 2, 2023),
+                        date: Date::from_ymd_opt(2023, 2, 3).unwrap(),
                     }
             })
             .is_some());
@@ -405,7 +414,7 @@ mod router_tests {
                     == Flight {
                         src: "YVR".to_string(),
                         dest: "SEA".to_string(),
-                        date: Date::new(4, 2, 2023),
+                        date: Date::from_ymd_opt(2023, 2, 4).unwrap(),
                     }
             })
             .is_some());
@@ -416,7 +425,7 @@ mod router_tests {
                     == Flight {
                         src: "YVR".to_string(),
                         dest: "YYZ".to_string(),
-                        date: Date::new(4, 2, 2023),
+                        date: Date::from_ymd_opt(2023, 2, 4).unwrap(),
                     }
             })
             .is_some());
@@ -431,38 +440,48 @@ mod router_tests {
             Destination {
                 // Source
                 iata: "YYZ".to_string(),
-                dates: DateRange(
-                    SingleDateRange::None,
-                    SingleDateRange::DateRange(Date::new(1, 2, 2023), Date::new(3, 2, 2023)),
-                ),
+                dates: DateConstraints {
+                    date_range: Some(DateRange(
+                        SingleDateRange::None,
+                        SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 1).unwrap(), Date::from_ymd_opt(2023, 2, 3).unwrap()))),
+                    date_restrictions: Rc::new(DateRestrictions::default())
+                }
             },
             Destination {
                 iata: "YVR".to_string(),
-                dates: DateRange(
-                    SingleDateRange::DateRange(Date::new(2, 2, 2023), Date::new(4, 2, 2023)),
-                    SingleDateRange::DateRange(Date::new(4, 2, 2023), Date::new(7, 2, 2023)),
-                ),
+                dates: DateConstraints {
+                    date_range: Some(DateRange(
+                        SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 2).unwrap(), Date::from_ymd_opt(2023, 2, 4).unwrap()),
+                        SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 4).unwrap(), Date::from_ymd_opt(2023, 2, 7).unwrap()))),
+                    date_restrictions: Rc::new(DateRestrictions::default())
+                }
             },
             Destination {
                 iata: "YYC".to_string(),
-                dates: DateRange(
-                    SingleDateRange::DateRange(Date::new(3, 2, 2023), Date::new(7, 2, 2023)),
-                    SingleDateRange::DateRange(Date::new(4, 2, 2023), Date::new(7, 2, 2023)),
-                ),
+                dates: DateConstraints {
+                    date_range: Some(DateRange(
+                        SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 3).unwrap(), Date::from_ymd_opt(2023, 2, 7).unwrap()),
+                        SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 4).unwrap(), Date::from_ymd_opt(2023, 2, 7).unwrap()))),
+                    date_restrictions: Rc::new(DateRestrictions::default())
+                }
             },
             Destination {
                 iata: "SEA".to_string(),
-                dates: DateRange(
-                    SingleDateRange::DateRange(Date::new(5, 2, 2023), Date::new(7, 2, 2023)),
-                    SingleDateRange::DateRange(Date::new(6, 2, 2023), Date::new(7, 2, 2023)),
-                ),
+                dates: DateConstraints {
+                    date_range: Some(DateRange(
+                        SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 5).unwrap(), Date::from_ymd_opt(2023, 2, 7).unwrap()),
+                        SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 6).unwrap(), Date::from_ymd_opt(2023, 2, 7).unwrap()))),
+                    date_restrictions: Rc::new(DateRestrictions::default())
+                }
             },
             Destination {
                 iata: "FEA".to_string(),
-                dates: DateRange(
-                    SingleDateRange::FixedDate(Date::new(8, 2, 2023)),
-                    SingleDateRange::None,
-                ),
+                dates: DateConstraints {
+                    date_range: Some(DateRange(
+                        SingleDateRange::FixedDate(Date::from_ymd_opt(2023, 2, 8).unwrap()),
+                        SingleDateRange::None)),
+                    date_restrictions: Rc::new(DateRestrictions::default())
+                }
             },
         ];
 
@@ -470,7 +489,7 @@ mod router_tests {
             flight: Flight {
                 src: "YYZ".to_string(),
                 dest: "YVR".to_string(),
-                date: Date::new(2, 2, 2023),
+                date: Date::from_ymd_opt(2023, 2, 2).unwrap(),
             },
             back_price: Some(100.0),
             price: Some(100.0),
@@ -478,25 +497,34 @@ mod router_tests {
                 flight: Flight {
                     src: "".to_string(),
                     dest: "YYZ".to_string(),
-                    date: Date::new(1, 2, 2023),
+                    date: Date::from_ymd_opt(2023, 2, 1).unwrap(),
                 },
                 back_price: Some(200.0),
                 price: Some(100.0),
                 prev: None,
                 dest_ref: Destination {
                     iata: "YYZ".to_string(),
-                    dates: DateRange(SingleDateRange::None, SingleDateRange::None),
+                    dates: DateConstraints {
+                        date_range: Some(DateRange(SingleDateRange::None, SingleDateRange::None)),
+                        date_restrictions: Rc::new(DateRestrictions::default())
+                    }
                 },
             })),
             dest_ref: Destination {
                 iata: "YVR".to_string(),
-                dates: DateRange(SingleDateRange::None, SingleDateRange::None),
+                dates: DateConstraints {
+                    date_range: Some(DateRange(SingleDateRange::None, SingleDateRange::None)),
+                    date_restrictions: Rc::new(DateRestrictions::default())
+                }
             },
         };
 
         let final_dest = Destination {
             iata: "YYZ".to_string(),
-            dates: DateRange(SingleDateRange::None, SingleDateRange::None),
+            dates: DateConstraints {
+                date_range: Some(DateRange(SingleDateRange::None, SingleDateRange::None)),
+                date_restrictions: Rc::new(DateRestrictions::default())
+            }
         };
 
         let dest_list = router.fill_dest_list(Rc::new(curr_node), &final_dest, &init_dest_list);
@@ -527,38 +555,48 @@ mod router_tests {
                 Destination {
                     // Source
                     iata: "YYZ".to_string(),
-                    dates: DateRange(
-                        SingleDateRange::None,
-                        SingleDateRange::DateRange(Date::new(1, 2, 2023), Date::new(3, 2, 2023)),
-                    ),
+                    dates: DateConstraints {
+                        date_range: Some(DateRange(
+                            SingleDateRange::None,
+                            SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 1).unwrap(), Date::from_ymd_opt(2023, 2, 3).unwrap()))),
+                        date_restrictions: Rc::new(DateRestrictions::default())
+                    }
                 },
                 Destination {
                     iata: "YVR".to_string(),
-                    dates: DateRange(
-                        SingleDateRange::DateRange(Date::new(2, 2, 2023), Date::new(4, 2, 2023)),
-                        SingleDateRange::DateRange(Date::new(4, 2, 2023), Date::new(8, 2, 2023)),
-                    ),
+                    dates: DateConstraints {
+                        date_range: Some(DateRange(
+                            SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 2).unwrap(), Date::from_ymd_opt(2023, 2, 4).unwrap()),
+                            SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 4).unwrap(), Date::from_ymd_opt(2023, 2, 8).unwrap()))),
+                        date_restrictions: Rc::new(DateRestrictions::default())
+                    }
                 },
                 Destination {
                     iata: "YYC".to_string(),
-                    dates: DateRange(
-                        SingleDateRange::DateRange(Date::new(3, 2, 2023), Date::new(7, 2, 2023)),
-                        SingleDateRange::DateRange(Date::new(4, 2, 2023), Date::new(8, 2, 2023)),
-                    ),
+                    dates: DateConstraints {
+                        date_range: Some(DateRange(
+                            SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 3).unwrap(), Date::from_ymd_opt(2023, 2, 7).unwrap()),
+                            SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 4).unwrap(), Date::from_ymd_opt(2023, 2, 8).unwrap()))),
+                        date_restrictions: Rc::new(DateRestrictions::default()),
+                    }
                 },
                 Destination {
                     iata: "SEA".to_string(),
-                    dates: DateRange(
-                        SingleDateRange::DateRange(Date::new(5, 2, 2023), Date::new(7, 2, 2023)),
-                        SingleDateRange::DateRange(Date::new(6, 2, 2023), Date::new(8, 2, 2023)),
-                    ),
+                    dates: DateConstraints {
+                        date_range: Some(DateRange(
+                            SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 5).unwrap(), Date::from_ymd_opt(2023, 2, 7).unwrap()),
+                            SingleDateRange::DateRange(Date::from_ymd_opt(2023, 2, 6).unwrap(), Date::from_ymd_opt(2023, 2, 8).unwrap()))),
+                        date_restrictions: Rc::new(DateRestrictions::default())
+                    }
                 },
                 Destination {
                     iata: "YYZ".to_string(),
-                    dates: DateRange(
-                        SingleDateRange::FixedDate(Date::new(8, 2, 2023)),
-                        SingleDateRange::None,
-                    ),
+                    dates: DateConstraints {
+                        date_range: Some(DateRange(
+                            SingleDateRange::FixedDate(Date::from_ymd_opt(2023, 2, 8).unwrap()),
+                            SingleDateRange::None)),
+                        date_restrictions: Rc::new(DateRestrictions::default())
+                    }
                 },
             ],
         };

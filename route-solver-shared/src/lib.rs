@@ -4,8 +4,21 @@ pub mod queries {
         cmp::{max, min},
         rc::Rc,
     };
+    use serde::{Deserialize, Serialize};
 
     pub type Date = NaiveDate;
+
+    #[derive(Serialize, Deserialize)]
+    pub struct EchoQuery {
+        pub input: String
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub struct RouteQuery {
+        pub start_city: String,
+        pub end_city: String,
+        pub hops: Vec<String>,
+    }
 
     /// Date range for either the inbound or outbound flight, flexibility on whether the user wants
     /// exact dates, or doesn't card
@@ -29,7 +42,31 @@ pub mod queries {
     }
 
     impl SingleDateRange {
-        pub fn iter(
+        pub fn first_date(&self) -> Option<Date> {
+            match &self {
+                Self::None => None,
+                Self::FixedDate(d) => Some(d.clone()),
+                Self::DateRange(d1, _) => Some(d1.clone())
+            }
+        }
+
+        pub fn last_date(&self) -> Option<Date> {
+            match &self {
+                Self::None => None,
+                Self::FixedDate(d) => Some(d.clone()),
+                Self::DateRange(_, d2) => Some(d2.clone())
+            }
+        }
+
+        pub fn low_high(&self) -> (Option<Date>, Option<Date>) {
+            (self.first_date(), self.last_date())
+        }
+
+        pub fn iter(&self, restrictions: Rc<DateRestrictions>) -> SingleDateRangeIter {
+            self.iter_partial(restrictions, self.first_date())
+        }
+
+        pub fn iter_partial(
             &self,
             restrictions: Rc<DateRestrictions>,
             src_date: Option<Date>,
@@ -59,48 +96,28 @@ pub mod queries {
             }
         }
 
-        pub fn get_low_high(&self) -> Option<(Date, Date)> {
-            let low_s = match self {
-                SingleDateRange::FixedDate(d) => d,
-                SingleDateRange::DateRange(d1, _) => d1,
-                SingleDateRange::None => return None,
-            };
-
-            let high_s = match self {
-                SingleDateRange::FixedDate(d) => d,
-                SingleDateRange::DateRange(_, d2) => d2,
-                SingleDateRange::None => return None,
-            };
-
-            Some((low_s.clone(), high_s.clone()))
-        }
-
         pub fn intersect(&self, other: &SingleDateRange) -> SingleDateRange {
-            let s_hl = self.get_low_high();
-            let o_hl = other.get_low_high();
+            let (s_maybe_low, s_maybe_high) = self.low_high();
+            let (o_maybe_low, o_maybe_high) = other.low_high();
 
-            let (self_low, self_high) = match s_hl {
-                Some((h, l)) => (h, l),
-                None => return SingleDateRange::None,
-            };
+            let s_maybe_low = s_maybe_low.or(o_maybe_low);
+            let o_maybe_low = o_maybe_low.or(s_maybe_low);
+            let s_maybe_high = s_maybe_high.or(o_maybe_high);
+            let o_maybe_high = o_maybe_high.or(s_maybe_high);
 
-            let (other_low, other_high) = match o_hl {
-                Some((h, l)) => (h, l),
-                None => return SingleDateRange::None,
-            };
+            let dates = [s_maybe_low, s_maybe_high, o_maybe_low, o_maybe_high];
+            if dates.iter().any(|f| f.is_none()) { return SingleDateRange::None }
 
-            let low_inter = max(self_low, other_low);
-            let high_inter = min(self_high, other_high);
+            let lowest_date = max(s_maybe_low, o_maybe_low);
+            let high_date = min(s_maybe_high, o_maybe_high);
 
-            if low_inter > high_inter {
-                return SingleDateRange::None;
-            };
+            if (lowest_date > high_date) { return SingleDateRange::None }
 
-            if low_inter == high_inter {
-                return SingleDateRange::FixedDate(low_inter);
-            };
-
-            SingleDateRange::DateRange(low_inter, high_inter)
+            if (lowest_date == high_date) {
+                SingleDateRange::FixedDate(lowest_date.unwrap())
+            } else {
+                SingleDateRange::DateRange(lowest_date.unwrap(), high_date.unwrap())
+            }
         }
 
         /// Given a date truncate all dates before (inclusive) the given date.
@@ -140,6 +157,12 @@ pub mod queries {
         pub max_days: Option<NumDays>,
     }
 
+    impl Default for DateRestrictions {
+        fn default() -> Self {
+            Self { min_days: None, max_days: None }
+        }
+    }
+
     impl DateRestrictions {
         fn new() -> Self {
             DateRestrictions {
@@ -176,8 +199,22 @@ pub mod queries {
 
     #[derive(Clone, Debug)]
     pub struct DateConstraints {
-        date_range: DateRange,
-        date_restrictions: Rc<DateRestrictions>,
+        pub date_range: Option<DateRange>,
+        pub date_restrictions: Rc<DateRestrictions>,
+    }
+
+    impl DateConstraints {
+        pub fn get_intersect_iter_with_next(&self, next: &DateConstraints) -> SingleDateRangeIter {
+            let drs = (self.date_range.clone(), next.date_range.clone());
+            let sdr_intersect = match drs {
+                (Some(dr1), Some(dr2)) => dr1.1.intersect(&dr2.0),
+                (Some(dr1), None) => dr1.1,
+                (None, Some(dr2)) => dr2.0,
+                (None, None) => panic!("No date ranges should have been filtered and corrected by frontend")
+            };
+
+            sdr_intersect.iter(self.date_restrictions.clone()) 
+        }
     }
 
     /// Represents a single destination, as the IATA (airport code), and a date range which gives
@@ -197,7 +234,7 @@ pub mod queries {
                     if let Some(d) = self.curr_date.clone() {
                         self.curr_date = None;
                         if let Some(src_date) = self.src_date {
-                            if self.restrictions.within_constraints(src_date, d) {
+                            if !self.restrictions.within_constraints(src_date, d) {
                                 return None;
                             }
                         }
@@ -212,8 +249,13 @@ pub mod queries {
                             self.curr_date = None;
                             return None;
                         } else {
-                            self.curr_date = Some(d.clone() + Days::new(1));
-                            return Some(d);
+                            if !self.restrictions.within_constraints(self.src_date.unwrap(), d) {
+                                self.curr_date = None;
+                                return None;
+                            } else {
+                                self.curr_date = Some(d.clone() + Days::new(1));
+                                return Some(d);
+                            }
                         }
                     } else {
                         return None;
@@ -238,6 +280,11 @@ pub mod queries {
         pub price: f32,
     }
 }
+
+/**
+ * Unit Tests
+ */
+
 #[cfg(test)]
 mod tests {
     use std::rc::Rc;

@@ -6,6 +6,7 @@ use route_solver_shared::queries::{Date, Flight, SingleDateRange};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{collections::HashMap, time};
 use thiserror::Error;
+use chrono::{NaiveDate, Datelike};
 
 const SKYSCANNER_IND_PRICES_ENDPOINT: &str =
     "https://partners.api.skyscanner.net/apiservices/v3/flights/indicative/search";
@@ -90,9 +91,9 @@ impl Serialize for LegQuery {
             SingleDateRange::FixedDate(date) => state.serialize_field(
                 "fixedDate",
                 &HashMap::from([
-                    ("year", date.year),
-                    ("month", date.month),
-                    ("day", date.day),
+                    ("year", date.year()),
+                    ("month", date.month().try_into().unwrap()),
+                    ("day", date.day().try_into().unwrap()),
                 ]),
             ),
             SingleDateRange::DateRange(date1, date2) => state.serialize_field(
@@ -101,17 +102,17 @@ impl Serialize for LegQuery {
                     (
                         "startDate",
                         HashMap::from([
-                            ("year", date1.year),
-                            ("month", date1.month),
-                            ("day", date1.day),
+                            ("year", date1.year()),
+                            ("month", date1.month().try_into().unwrap()),
+                            ("day", date1.day().try_into().unwrap()),
                         ]),
                     ),
                     (
                         "endDate",
                         HashMap::from([
-                            ("year", date2.year),
-                            ("month", date2.month),
-                            ("day", date2.day),
+                            ("year", date2.year()),
+                            ("month", date2.month().try_into().unwrap()),
+                            ("day", date2.day().try_into().unwrap()),
                         ]),
                     ),
                 ]),
@@ -298,7 +299,7 @@ impl PriceQuery for TestPriceApiQuery {
                 let insert = Flight {
                     src: translate(src_idx).to_string(),
                     dest: translate(row_count).to_string(),
-                    date: Date::new(day_count, 2, 2023),
+                    date: Date::from_ymd_opt(2023, 2, day_count).unwrap(),
                 };
 
                 data.insert(insert, record[src_idx as usize].parse::<f32>().unwrap());
@@ -351,7 +352,7 @@ mod flight_api_tests {
             .get_price(Flight {
                 src: "YYZ".to_string(),
                 dest: "YYC".to_string(),
-                date: Date::new(1, 2, 2023),
+                date: Date::from_ymd_opt(2023, 2, 1).unwrap(),
             })
             .await
             .unwrap();

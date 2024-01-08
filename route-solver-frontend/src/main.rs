@@ -2,20 +2,21 @@ use std::{
     cell::RefCell,
     error::Error,
     fmt::{self, Debug, Display, Formatter},
-    rc::Rc,
+    rc::Rc, ops::Deref,
 };
 
-use log::info;
 use route_solver_shared::queries::*;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
-use web_sys::{HtmlElement, HtmlInputElement, Request, RequestInit, RequestMode, Response};
+use wasm_bindgen_futures::{JsFuture, future_to_promise, spawn_local};
+use web_sys::{HtmlElement, HtmlInputElement, Request, RequestInit, RequestMode, Response, console::log};
 use yew::{prelude::*, virtual_dom::Key};
+use serde_json::*;
 
 #[derive(Properties, PartialEq)]
 struct TextBoxProps {
     text: String,
-    node_ref: NodeRef,
+    type_name: String,
+    text_update_handler: Callback<String, ()>
 }
 
 #[derive(Properties, PartialEq)]
@@ -44,37 +45,45 @@ struct DropDownProps {
     node_ref: NodeRef,
 }
 
-#[derive(PartialEq, Clone, Default)]
-struct StartEndRefs {
-    start_node: NodeRef,
-    end_node: NodeRef,
-}
-
-impl StartEndRefs {
-    fn get_strings(&self) -> (String, String) {
-        let start_html = self.start_node.cast::<HtmlInputElement>().unwrap().value();
-        let end_html = self.end_node.cast::<HtmlInputElement>().unwrap().value();
-
-        (start_html, end_html)
-    }
-}
-
 struct ItineraryListItems {
     items: Vec<ItineraryListItemProps>,
 }
 
-#[function_component(TextBox)]
-fn text_box(TextBoxProps { text, node_ref }: &TextBoxProps) -> Html {
-    let my_text_handle = use_state(|| "".to_string());
+struct TextBox {
+    input_value: String
+}
 
-    let handle_input = Callback::from(move |input_event: InputEvent| {
-        let input_elem: HtmlInputElement = input_event.target().unwrap().dyn_into().unwrap();
-        let value = input_elem.value();
-        my_text_handle.set(value);
-    });
+enum TextMsg {
+    InputChanged(InputEvent),
+}
 
-    html! {
-        <input type={"text"} ref={node_ref.clone()} class={"form-control"} placeholder={text.clone()} aria-label={text.clone()} value={my_text_handle.clone()} oninput={handle_input} />
+impl Component for TextBox {
+    type Message = TextMsg;
+    type Properties = TextBoxProps;
+
+    fn create(ctx: &Context<Self>) -> Self {
+        TextBox { input_value: "".to_string() }
+    }
+
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+        match msg {
+            TextMsg::InputChanged(e) => {
+                let target = e.target();
+                let input = target.and_then(|t| t.dyn_into::<HtmlInputElement>().ok());
+
+                if let Some(input) = input {
+                    self.input_value = input.value();
+                    ctx.props().text_update_handler.emit(self.input_value.clone());
+                }
+            }
+        }
+        true
+    }
+
+    fn view(&self, ctx: &Context<Self>) -> Html {
+        html! {
+            <input type={"text"} class={"form-control"} placeholder={ctx.props().text.clone()} aria-label={ctx.props().text.clone()} type={ctx.props().type_name.clone()} value={self.input_value.clone()} oninput={ctx.link().callback(|e: InputEvent| TextMsg::InputChanged(e))} />
+        }
     }
 }
 
@@ -139,20 +148,33 @@ fn close_button(ButtonProps { text, on_click }: &ButtonProps) -> Html {
 
 #[derive(PartialEq, Clone, Properties)]
 struct FlyInProps {
-    node_refs: StartEndRefs,
+    fly_in_update_handler: Callback<(String, String), ()>
 }
 
 #[function_component(FlyInComponent)]
-fn fly_in(FlyInProps { node_refs }: &FlyInProps) -> Html {
+fn fly_in(FlyInProps { fly_in_update_handler }: &FlyInProps) -> Html {
+    let mut curr_vals = use_state(|| ["".to_string(), "".to_string()]);
+
+    let box_callback_gen = |id: usize| {
+        let curr_vals = curr_vals.clone();
+        let fly_in_cb = fly_in_update_handler.clone();
+        Callback::from(move |new_val: String| {
+            let mut new_vals = curr_vals.deref().clone();
+            new_vals[id] = new_val;
+            fly_in_cb.clone().emit((new_vals[0].clone(), new_vals[1].clone()));
+            curr_vals.set(new_vals);
+        })
+    };
+
     html! {
         <div class="d-inline-flex">
             <div class="input-group flex-nowrap pe-2">
                 <span class="input-group-text" id="addon-wrapping">{ "Start" }</span>
-                <input ref={ &node_refs.start_node } type="date" class="form-control" />
+                <TextBox text="Start" type_name="date" text_update_handler={box_callback_gen(0)} />
             </div>
             <div class="input-group flex-nowrap pe-2">
                 <span class="input-group-text" id="addon-wrapping">{ "End" }</span>
-                <input ref={ &node_refs.end_node } type="date" class="form-control" />
+                <TextBox text="End" type_name="date" text_update_handler={box_callback_gen(1)} />
             </div>
         </div>
     }
@@ -219,28 +241,53 @@ fn dropdown(
 }
 
 #[derive(PartialEq, Clone, Default)]
-struct ListItemRefs {
-    airport_ref: NodeRef,
-    start_date_refs: StartEndRefs,
-    end_date_refs: StartEndRefs,
-    temp_constraints: StartEndRefs,
+struct ListItemVals {
+    airport: String,
+    start_dates: (String, String),
+    end_dates: (String, String),
+    temp_constraints: (String, String),
 }
 
 #[derive(Properties, PartialEq, Clone)]
 struct ItineraryListItemProps {
     id: usize,
     remove_handler: Callback<usize>,
-    list_item_refs: Rc<ListItemRefs>,
+    vals_updated_handler: Callback<ListItemVals, ()>
 }
 
-struct ItineraryRow {}
+struct ItineraryRow {
+    list_item_vals: ListItemVals
+}
+
+enum ItineraryRowMsg {
+    FlyInUpdated(usize, String, String),
+    AirportUpdated(String)
+}
 
 impl Component for ItineraryRow {
     type Properties = ItineraryListItemProps;
-    type Message = ();
+    type Message = ItineraryRowMsg;
 
     fn create(_ctx: &Context<Self>) -> Self {
-        Self {}
+        Self {
+            list_item_vals: ListItemVals::default()
+        }
+    }
+
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+        match msg {
+            ItineraryRowMsg::FlyInUpdated(idx, start, end) => {
+                let mut fly_in_ref = match idx {
+                    0 => &mut self.list_item_vals.start_dates,
+                    1 => &mut self.list_item_vals.end_dates,
+                    _ => panic!("Bad messaging in ItineraryRow element")
+                };
+                *fly_in_ref = (start, end);
+            },
+            ItineraryRowMsg::AirportUpdated(text) => self.list_item_vals.airport = text
+        }
+        ctx.props().vals_updated_handler.emit(self.list_item_vals.clone());
+        true
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
@@ -257,7 +304,7 @@ impl Component for ItineraryRow {
                 <div class="container p-2">
                     <div class="row justify-content-start">
                         <div class={"col-md-auto"}>
-                            <TextBox text={ "Airport Code" } node_ref={ &ctx.props().list_item_refs.airport_ref } />
+                            <TextBox text={ "Airport Code" } type_name={"text"} text_update_handler={ ctx.link().callback(|input: String| ItineraryRowMsg::AirportUpdated(input)) } />
                         </div>
                         <div class={"col-md-auto"}>
                             <CloseButton text="Close" on_click={remove_handler_passthrough} />
@@ -265,17 +312,17 @@ impl Component for ItineraryRow {
                     </div>
                     <div class="row justify-content-start">
                         <ListItem text={ "Add fly in dates" }>
-                            <FlyInComponent node_refs={ ctx.props().list_item_refs.start_date_refs.clone() } />
+                            <FlyInComponent fly_in_update_handler={ctx.link().callback(|input: (String, String)| ItineraryRowMsg::FlyInUpdated(0, input.0, input.1))} />
                         </ListItem>
                     </div>
                     <div class="row justify-content-start">
                         <ListItem text={ "Add fly out dates" }>
-                            <FlyInComponent node_refs={ ctx.props().list_item_refs.end_date_refs.clone() } />
+                            <FlyInComponent fly_in_update_handler={ctx.link().callback(|input: (String, String)| ItineraryRowMsg::FlyInUpdated(1, input.0, input.1))} />
                         </ListItem>
                     </div>
                     <div class="row justify-content-start">
                         <ListItem text={ "Add other constraints" }>
-                            <FlyInComponent node_refs={ ctx.props().list_item_refs.temp_constraints.clone() } />
+                            <p>{"Yay constraints"}</p>
                         </ListItem>
                     </div>
                 </div>
@@ -287,12 +334,14 @@ impl Component for ItineraryRow {
 struct ItineraryList {
     html_list: Vec<(Html, bool)>,
     curr_count: usize,
-    ref_list: RefCell<Vec<Rc<ListItemRefs>>>,
+    list_item_vals: Vec<ListItemVals>,
 }
 
 enum ItineraryListMessage {
     AddChild,
     RemoveChild(usize),
+    ChildUpdate(usize, ListItemVals),
+    SendPost
 }
 
 impl ItineraryList {
@@ -302,15 +351,10 @@ impl ItineraryList {
             .enumerate()
             .filter(|(_, (_, on))| *on)
             .map(|(idx, (_, _))| {
-                let row_ref_list = &self.ref_list.borrow()[idx];
-                let airport_code = row_ref_list
-                    .airport_ref
-                    .cast::<HtmlInputElement>()
-                    .unwrap()
-                    .value();
-                let start_dates = row_ref_list.start_date_refs.get_strings();
-                let end_dates = row_ref_list.end_date_refs.get_strings();
-                let temp_dates = row_ref_list.temp_constraints.get_strings();
+                let airport_code = self.list_item_vals[idx].airport.clone();
+                let start_dates = self.list_item_vals[idx].start_dates.clone();
+                let end_dates = self.list_item_vals[idx].end_dates.clone();
+                let temp_dates = self.list_item_vals[idx].temp_constraints.clone();
 
                 format!(
                     "Airport {} start dates {} {} end dates {} {} temp dates {} {}",
@@ -336,48 +380,61 @@ impl Component for ItineraryList {
         Self {
             html_list: vec![],
             curr_count: 0,
-            ref_list: RefCell::new(Vec::new()),
+            list_item_vals: vec![]
         }
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+        use web_sys::console;
+
         match msg {
             ItineraryListMessage::AddChild => {
                 let link = ctx.link();
                 let count = self.curr_count.clone();
-                self.ref_list
-                    .borrow_mut()
-                    .push(Rc::new(ListItemRefs::default()));
-                self.html_list.push((html! { <ItineraryRow key={ self.curr_count.clone() } list_item_refs={ self.ref_list.borrow().last().unwrap().clone() } id={ self.curr_count.clone() } remove_handler={ link.callback(move |_| ItineraryListMessage::RemoveChild(count)) } /> }, true));
+                self.list_item_vals
+                    .push(ListItemVals::default());
+                self.html_list.push((html! { <ItineraryRow id={ self.curr_count.clone() } key={ self.curr_count.clone() } vals_updated_handler={ ctx.link().callback(move |vals: ListItemVals| ItineraryListMessage::ChildUpdate( count, vals)) } remove_handler={ link.callback(move |_| ItineraryListMessage::RemoveChild( count )) } /> }, true));
                 self.curr_count += 1;
+            }
+            ItineraryListMessage::ChildUpdate(idx, vals) => {
+                self.list_item_vals[idx] = vals;
+            }
+            ItineraryListMessage::SendPost => {
+                let text = self.get_formatted_text();
+
+                console::log_1(&("Posting: ".to_string() + &text).into());
+
+                let resp_runner = async {
+                    let query: JsValue = serde_json::to_string(&EchoQuery { input: text }).unwrap().into();
+
+                    let mut opts = RequestInit::new();
+                    opts.method("POST");
+                    opts.body(Some(&query));
+                    let request = Request::new_with_str_and_init("echo", &opts).unwrap();
+                    let _ = request.headers().set("content-type", "application/json");
+                    let window = web_sys::window().unwrap();
+                    let resp_value = JsFuture::from(window.fetch_with_request(&request)).await.unwrap();
+                    let val = resp_value.as_string();
+
+                    val.and_then(|r| Some(console::log_1(&("Response ".to_string() + &r).into())));
+                    // Ok(JsValue::from_bddool(true))
+                };
+
+                // let js_promise = future_to_promise(resp_runner);
+                spawn_local(resp_runner);
             }
             ItineraryListMessage::RemoveChild(idx) => self.html_list.iter_mut().for_each(|x| {
                 if x.0.key().unwrap().eq(&Key::from(idx)) {
                     *x = (x.0.clone(), false)
                 }
-            }),
-            // .retain(|x| !x.0.key().unwrap().eq(&Key::from(idx))),
-        };
+            })
+        }
 
         true
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         let link = ctx.link();
-
-        let post_data = {
-            Callback::from(move |_| {
-                // Get data
-                let test = self.get_formatted_text();
-                // let text = self.get_formatted_text();
-
-                // let mut opts = RequestInit::new();
-                // opts.method("POST");
-                // let request = Request::new_with_str_and_init("runflights", &opts).unwrap();
-                // let window = web_sys::window().unwrap();
-                // let resp_value = JsFuture::from(window.fetch_with_request(&request)).await?;
-            })
-        };
 
         let rows = self
             .html_list
@@ -393,7 +450,7 @@ impl Component for ItineraryList {
                         <Button text={"Add new row"} on_click={ link.callback(|_| ItineraryListMessage::AddChild) } />
                     </div>
                     <div>
-                        <Button text={"Go!"} on_click={post_data} />
+                        <Button text={"Go!"} on_click={ link.callback(|_| ItineraryListMessage::SendPost) } />
                     </div>
                 </div>
             </>
