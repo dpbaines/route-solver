@@ -12,6 +12,7 @@ use std::{
 use crate::flight_api::PriceQuery;
 use route_solver_shared::queries::*;
 
+#[derive(Clone)]
 struct RouterProblem {
     dest_list: Vec<Destination>,
 }
@@ -141,7 +142,9 @@ impl<Api: PriceQuery> Router<Api> {
         main_queue: &mut BinaryHeap<Rc<FlightNode>>,
     ) {
         for next_dest in remaining_dests.iter() {
-            for possible_date in next_dest.dates.get_intersect_iter_with_next(&src.dest_ref.dates) {
+            println!("Flight {} -> {}", src.flight.dest, next_dest.iata);
+            for possible_date in src.dest_ref.dates.get_intersect_iter_with_next(&next_dest.dates, Some(src.flight.date)) {
+                println!("  Checking date {}", possible_date);
                 // Create next nodes
                 let flight = Flight {
                     src: src.flight.dest.clone(),
@@ -216,7 +219,7 @@ impl<Api: PriceQuery> Router<Api> {
             flight: Flight {
                 src: "".to_string(),
                 dest: src.iata.clone(),
-                date: Date::from_ymd_opt(0, 0, 0).unwrap(),
+                date: Date::from_ymd_opt(2020, 1, 1).unwrap(),
             },
             back_price: Some(0.0),
             price: Some(0.0),
@@ -601,7 +604,9 @@ mod router_tests {
             ],
         };
 
-        let result = router.calc(problem).await;
+        let result = router.calc(problem.clone()).await;
+        assert_eq!(result.result.last().unwrap().flight.dest, problem.dest_list.last().unwrap().iata);
+        assert_eq!(result.result.len(), problem.dest_list.len() - 1);
         println!("Result: {}", result);
         println!("Total price: ${}", result.total_price());
         println!("Stats: {}", router.stats);

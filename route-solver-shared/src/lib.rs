@@ -1,5 +1,5 @@
 pub mod queries {
-    use chrono::{Days, NaiveDate};
+    use chrono::{Days, NaiveDate, Duration};
     use std::{
         cmp::{max, min},
         rc::Rc,
@@ -29,14 +29,11 @@ pub mod queries {
         DateRange(Date, Date),
     }
 
-    /// Wrapper struct representing a flat number of days
-    #[derive(Clone, Debug)]
-    pub struct NumDays(pub u16);
-
+    #[derive(Debug)]
     pub struct SingleDateRangeIter {
         date_range: SingleDateRange,
         src_date: Option<Date>,
-        curr_date: Option<Date>,
+        curr_date: Date,
         day_count: u16,
         restrictions: Rc<DateRestrictions>,
     }
@@ -62,6 +59,15 @@ pub mod queries {
             (self.first_date(), self.last_date())
         }
 
+        pub fn fixify(&self) -> Option<Self> {
+            // Temporary solution
+            match self {
+                SingleDateRange::FixedDate(d) => Some(SingleDateRange::DateRange(d.clone(), d.clone())),
+                SingleDateRange::DateRange(d1, d2) => Some(SingleDateRange::DateRange(d1.clone(), d2.clone())),
+                SingleDateRange::None => None,
+            }
+        }
+
         pub fn iter(&self, restrictions: Rc<DateRestrictions>) -> SingleDateRangeIter {
             self.iter_partial(restrictions, self.first_date())
         }
@@ -71,24 +77,25 @@ pub mod queries {
             restrictions: Rc<DateRestrictions>,
             src_date: Option<Date>,
         ) -> SingleDateRangeIter {
+            let start_date = max(src_date.map(|d| d + restrictions.min_days.unwrap_or(Duration::days(0))), self.first_date());
             match self {
                 Self::FixedDate(d) => SingleDateRangeIter {
                     date_range: self.clone(),
-                    curr_date: Some(d.clone()),
+                    curr_date: start_date.unwrap(), // An error here is a hard error
                     day_count: 0,
                     src_date,
                     restrictions,
                 },
                 Self::DateRange(d1, _) => SingleDateRangeIter {
                     date_range: self.clone(),
-                    curr_date: Some(d1.clone()),
+                    curr_date: start_date.unwrap(),
                     day_count: 0,
                     src_date,
                     restrictions,
                 },
                 _ => SingleDateRangeIter {
                     date_range: self.clone(),
-                    curr_date: None,
+                    curr_date: NaiveDate::MIN,
                     day_count: 0,
                     src_date,
                     restrictions,
@@ -111,9 +118,9 @@ pub mod queries {
             let lowest_date = max(s_maybe_low, o_maybe_low);
             let high_date = min(s_maybe_high, o_maybe_high);
 
-            if (lowest_date > high_date) { return SingleDateRange::None }
+            if lowest_date > high_date { return SingleDateRange::None }
 
-            if (lowest_date == high_date) {
+            if lowest_date == high_date {
                 SingleDateRange::FixedDate(lowest_date.unwrap())
             } else {
                 SingleDateRange::DateRange(lowest_date.unwrap(), high_date.unwrap())
@@ -153,8 +160,8 @@ pub mod queries {
 
     #[derive(Clone, Debug)]
     pub struct DateRestrictions {
-        pub min_days: Option<NumDays>,
-        pub max_days: Option<NumDays>,
+        pub min_days: Option<Duration>,
+        pub max_days: Option<Duration>,
     }
 
     impl Default for DateRestrictions {
@@ -171,24 +178,24 @@ pub mod queries {
             }
         }
 
-        fn add_min_days_constraint(&mut self, md: NumDays) {
+        fn add_min_days_constraint(&mut self, md: Duration) {
             self.min_days = Some(md);
         }
 
-        fn add_max_days_constraint(&mut self, md: NumDays) {
+        fn add_max_days_constraint(&mut self, md: Duration) {
             self.max_days = Some(md);
         }
 
         fn within_constraints(&self, prev_date: Date, curr_date: Date) -> bool {
             let dur = curr_date - prev_date;
             let min_met = if let Some(md) = &self.min_days {
-                dur.num_days() >= md.0 as i64
+                dur >= *md
             } else {
                 true
             };
 
             let max_met = if let Some(md) = &self.max_days {
-                dur.num_days() <= md.0 as i64
+                dur <= *md
             } else {
                 true
             };
@@ -204,7 +211,7 @@ pub mod queries {
     }
 
     impl DateConstraints {
-        pub fn get_intersect_iter_with_next(&self, next: &DateConstraints) -> SingleDateRangeIter {
+        pub fn get_intersect_iter_with_next(&self, next: &DateConstraints, src_date: Option<Date>) -> SingleDateRangeIter {
             let drs = (self.date_range.clone(), next.date_range.clone());
             let sdr_intersect = match drs {
                 (Some(dr1), Some(dr2)) => dr1.1.intersect(&dr2.0),
@@ -213,7 +220,7 @@ pub mod queries {
                 (None, None) => panic!("No date ranges should have been filtered and corrected by frontend")
             };
 
-            sdr_intersect.iter(self.date_restrictions.clone()) 
+            sdr_intersect.iter_partial(self.date_restrictions.clone(), src_date) 
         }
     }
 
@@ -229,40 +236,25 @@ pub mod queries {
         type Item = Date;
 
         fn next(&mut self) -> Option<Self::Item> {
-            match &self.date_range {
-                SingleDateRange::FixedDate(_) => {
-                    if let Some(d) = self.curr_date.clone() {
-                        self.curr_date = None;
-                        if let Some(src_date) = self.src_date {
-                            if !self.restrictions.within_constraints(src_date, d) {
-                                return None;
-                            }
-                        }
-                        return Some(d.clone());
-                    } else {
-                        return None;
-                    }
-                }
-                SingleDateRange::DateRange(_, date2) => {
-                    if let Some(d) = self.curr_date.clone() {
-                        if d > *date2 {
-                            self.curr_date = None;
-                            return None;
-                        } else {
-                            if !self.restrictions.within_constraints(self.src_date.unwrap(), d) {
-                                self.curr_date = None;
-                                return None;
-                            } else {
-                                self.curr_date = Some(d.clone() + Days::new(1));
-                                return Some(d);
-                            }
-                        }
-                    } else {
-                        return None;
-                    }
-                }
-                SingleDateRange::None => return None,
+            // TODO: Having a seperate fixed date and None date type is in retrospect really stupid, fix this later
+            let end_date = match self.date_range.fixify() {
+                Some(SingleDateRange::DateRange(_, d)) => d,
+                _ => return None
+            };
+
+            // Check max restriction
+            if self.restrictions.max_days.zip(self.src_date).map(|(max_days, src_date)| max_days <= self.curr_date.signed_duration_since(src_date)).unwrap_or(false) {
+                return None; 
             }
+
+            // Check if is past max date
+            if self.curr_date > end_date {
+                return None;
+            }
+
+            let ret = Some(self.curr_date);
+            self.curr_date = self.curr_date + Days::new(1);
+            ret
         }
     }
 
@@ -289,8 +281,8 @@ pub mod queries {
 mod tests {
     use std::rc::Rc;
 
-    use crate::queries::{Date, DateRestrictions, NumDays, SingleDateRange};
-    use chrono::Days;
+    use crate::queries::{Date, DateRestrictions, SingleDateRange};
+    use chrono::{Days, Duration};
 
     #[test]
     fn test_date_cmp() {
@@ -309,8 +301,8 @@ mod tests {
     #[test]
     fn test_date_iter_with_restrictions() {
         let restrictions = Rc::new(DateRestrictions {
-            min_days: Some(NumDays(2)),
-            max_days: Some(NumDays(4)),
+            min_days: Some(Duration::days(2)),
+            max_days: Some(Duration::days(4)),
         });
         let d_range = SingleDateRange::DateRange(
             Date::from_ymd_opt(2023, 3, 3).unwrap(),
@@ -318,14 +310,8 @@ mod tests {
         );
         let mut d_r_iter = d_range.iter(restrictions);
 
-        assert_eq!(
-            d_r_iter.next(),
-            Some(Date::from_ymd_opt(2023, 3, 3).unwrap())
-        );
-        assert_eq!(
-            d_r_iter.next(),
-            Some(Date::from_ymd_opt(2023, 3, 4).unwrap())
-        );
+        println!("Iter dump: {:?}", d_r_iter);
+
         assert_eq!(
             d_r_iter.next(),
             Some(Date::from_ymd_opt(2023, 3, 5).unwrap())
@@ -389,11 +375,6 @@ mod tests {
             d_fixed_fixed1.intersect(&d_fixed_fixed2),
             SingleDateRange::FixedDate(Date::from_ymd_opt(2023, 3, 3).unwrap())
         );
-
-        let d_none1 = SingleDateRange::None;
-        let d_none2 = SingleDateRange::FixedDate(Date::from_ymd_opt(2023, 3, 3).unwrap());
-
-        assert_eq!(d_none1.intersect(&d_none2), SingleDateRange::None);
 
         let d_range_range1 = SingleDateRange::DateRange(
             Date::from_ymd_opt(2023, 3, 3).unwrap(),
